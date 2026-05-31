@@ -15,7 +15,7 @@ app.use(express.json());
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const PORT = process.env.PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL;
-const RUST_BINARY = path.join(__dirname, '../rust-agent/target/debug/zero-drift-agent');
+const RUST_BINARY = process.env.RUST_BINARY_PATH
 const POLL_INTERVAL_MS = 300000; // 5 minutes
 const COOLDOWN_MS = 2 * 60 * 60 * 1000; // 2 hours post-trade
 const MAX_ALERTS_PER_HOUR = 3;
