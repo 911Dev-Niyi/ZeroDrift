@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+nodejs-engine/node_modules/
+
+# Rust build artifacts
+rust-agent/target/
+
+# Next.js
+frontend/.next/
+
+# Env files
+.env
+.env.local
+frontend/.env.local
+nodejs-engine/.env
+
+# OS
+.DS_Store
+Thumbs.db
+EOF

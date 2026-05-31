@@ -1,0 +1,36 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Syne:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --bg: #050508;
+  --bg2: #0a0a0f;
+  --surface: #0f0f18;
+  --surface2: #16161f;
+  --border: #1e1e2e;
+  --green: #00ff88;
+  --green2: #00cc6a;
+  --red: #ff3366;
+  --yellow: #ffcc00;
+  --blue: #0088ff;
+  --text: #e8e8f0;
+  --text2: #8888aa;
+  --text3: #444466;
+  --font-display: 'Syne', sans-serif;
+  --font-mono: 'Space Mono', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--green); }
+
+::selection { background: var(--green); color: #000; }
