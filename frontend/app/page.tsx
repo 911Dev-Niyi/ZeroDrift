@@ -7,7 +7,7 @@ import { useAccount, useSendTransaction } from 'wagmi';
 import { parseEther } from 'viem';
 import axios from 'axios';
 
-const API = 'http://localhost:3001';
+const API = process.env.NEXT_PUBLIC_BACKEND_URL;
 
 interface Market {
   slug: string;

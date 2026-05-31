@@ -14,6 +14,7 @@ app.use(express.json());
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const PORT = process.env.PORT || 3001;
+const FRONTEND_URL = process.env.FRONTEND_URL;
 const RUST_BINARY = path.join(__dirname, '../rust-agent/target/debug/zero-drift-agent');
 const POLL_INTERVAL_MS = 300000; // 5 minutes
 const COOLDOWN_MS = 2 * 60 * 60 * 1000; // 2 hours post-trade
@@ -219,7 +220,7 @@ function broadcastAlert(message, newsTimestamp, slug) {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [[
-          { text: '⚡ Execute on ZeroDrift', web_app: { url: `https://zerodrift.vercel.app/trade?slug=${slug}` } },
+          { text: '⚡ Execute on ZeroDrift', web_app: { url: `${FRONTEND_URL}/trade?slug=${slug}` } },
           { text: '📊 View on Limitless', url: `https://limitless.exchange/markets/${slug}` },
         ]],
       },
@@ -346,7 +347,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
         parse_mode: 'MarkdownV2',
         reply_markup: {
           inline_keyboard: [[
-            { text: '⚡ Execute on ZeroDrift', web_app: { url: `https://zerodrift.vercel.app/trade?slug=${slug}` } },
+            { text: '⚡ Execute on ZeroDrift', web_app: { url: `${FRONTEND_URL}/trade?slug=${slug}` } },
             { text: '📊 View on Limitless', url: `https://limitless.exchange/markets/${slug}` },
           ]],
         },
@@ -355,7 +356,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
         bot.sendMessage(chatId, `Trade Proposal: ${slug} | ${result.side} | $${result.amount_usdc}`, {
           reply_markup: {
             inline_keyboard: [[
-              { text: '⚡ Execute on ZeroDrift', web_app: { url: `https://zerodrift.vercel.app/trade?slug=${slug}` } },
+              { text: '⚡ Execute on ZeroDrift', web_app: { url: `${FRONTEND_URL}/trade?slug=${slug}` } },
             ]],
           },
         });
