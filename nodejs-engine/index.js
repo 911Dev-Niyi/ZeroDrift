@@ -337,7 +337,7 @@ function broadcastAlert(message, newsTimestamp, slug) {
             [
               {
                 text: "⚡ Execute on ZeroDrift",
-                web_app: { url: `${FRONTEND_URL}/trade?slug=${slug}` },
+                web_app: { url: `${FRONTEND_URL}/?slug=${slug}` },
               },
               {
                 text: "📊 View on Limitless",
@@ -572,7 +572,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
                 [
                   {
                     text: `⚡ Trade YES @ ${(m.yes_price * 100).toFixed(0)}%`,
-                    web_app: { url: `${FRONTEND_URL}/trade?slug=${m.slug}` },
+                    web_app: { url: `${FRONTEND_URL}/?slug=${m.slug}` },
                   },
                 ],
                 [
@@ -631,16 +631,16 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
         amount,
       ]);
       const hasPrice = result.estimated_price && result.estimated_shares;
-      const reply = `📊 *Trade Proposal*\n\n🎯 *${escapeMarkdown(result.slug)}*\n\n💰 Side: *${result.side}*\n💵 Amount: *$${result.amount_usdc} USDC*\n📈 Est\\. Price: *${hasPrice ? "$" + result.estimated_price.toFixed(3) : "N/A"}*\n🎰 Est\\. Shares: *${hasPrice ? result.estimated_shares.toFixed(2) : "N/A"}*\n\n_Review and execute on ZeroDrift_`;
+      const reply = `📊 *Trade Proposal*\n\n🎯 ${escapeMarkdown(result.slug)}\n\n💰 Side: ${result.side}\n💵 Amount: $${result.amount_usdc} USDC\n📈 Price: ${hasPrice ? '$' + result.estimated_price.toFixed(3) : 'N/A'}\n🎰 Shares: ${hasPrice ? result.estimated_shares.toFixed(2) : 'N/A'}\n\nReview and execute on ZeroDrift`;
       bot
         .sendMessage(chatId, reply, {
-          parse_mode: "MarkdownV2",
+          parse_mode: "Markdown",
           reply_markup: {
             inline_keyboard: [
               [
                 {
                   text: "⚡ Execute on ZeroDrift",
-                  web_app: { url: `${FRONTEND_URL}/trade?slug=${slug}` },
+                  web_app: { url: `${FRONTEND_URL}/?slug=${slug}` },
                 },
                 {
                   text: "📊 View on Limitless",
