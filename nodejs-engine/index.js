@@ -466,50 +466,127 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
 
   bot.onText(/\/alphas/, async (msg) => {
     const chatId = msg.chat.id;
-    bot.sendMessage(chatId, '⏳ Scanning for fresh alpha...');
-    try {
-      const [btc, eth, sol] = await Promise.all([
-        runRust(['search', '--keyword', 'BTC']),
-        runRust(['search', '--keyword', 'ETH']),
-        runRust(['search', '--keyword', 'SOL']),
-      ]);
+    bot.sendMessage(chatId, "⚡ *Scanning alpha across all markets\\.\\.\\.*", {
+      parse_mode: "MarkdownV2",
+    });
 
+    try {
+      // Search across a broad set of keywords for diversity
+      const keywords = ["BTC", "ETH", "SOL", "XRP", "Trump", "ETF", "SEC"];
+      const results = await Promise.allSettled(
+        keywords.map((kw) => runRust(["search", "--keyword", kw])),
+      );
+
+      // Collect and deduplicate
       const seen = new Set();
-      const markets = [btc, eth, sol]
-        .flatMap(r => r.markets || [])
-        .filter(m => {
+      const allMarkets = results
+        .filter((r) => r.status === "fulfilled")
+        .flatMap((r) => r.value.markets || [])
+        .filter((m) => {
           const t = (m.title || m.slug).toLowerCase();
           if (seen.has(m.slug)) return false;
           seen.add(m.slug);
-          return t.includes('up or down') || t.includes('price') ||
-                 t.includes('btc') || t.includes('eth') || t.includes('sol');
-        })
-        .slice(0, 3);
+          // Only crypto/finance markets, no sports
+          return (
+            t.includes("up or down") ||
+            t.includes("price") ||
+            t.includes("btc") ||
+            t.includes("eth") ||
+            t.includes("sol") ||
+            t.includes("xrp") ||
+            t.includes("trump") ||
+            t.includes("etf") ||
+            t.includes("bitcoin") ||
+            t.includes("ethereum") ||
+            t.includes("crypto")
+          );
+        });
 
-      if (markets.length === 0) {
-        bot.sendMessage(chatId, '📭 No fresh alpha right now. Check back soon.');
+      if (allMarkets.length === 0) {
+        bot.sendMessage(
+          chatId,
+          "📭 No active markets found right now\\. Try again in a few minutes\\.",
+          { parse_mode: "MarkdownV2" },
+        );
         return;
       }
 
-      for (const market of markets) {
-        const ob = await runRust(['orderbook', '--slug', market.slug]).catch(() => null);
-        const yesPrice = ob?.yes_price;
-        const noPrice = ob?.no_price;
-        const hasPrice = yesPrice && noPrice;
+      // Fetch orderbook for all markets in parallel
+      const withPrices = await Promise.allSettled(
+        allMarkets.map(async (m) => {
+          const ob = await runRust(["orderbook", "--slug", m.slug]);
+          return {
+            ...m,
+            yes_price: ob.yes_price,
+            no_price: ob.no_price,
+            status: ob.status,
+          };
+        }),
+      );
 
-        const card = `🎯 *Alpha Opportunity*\n\n*${escapeMarkdown(market.title || market.slug)}*\n\n📈 YES: *${hasPrice ? (yesPrice * 100).toFixed(0) + '%' : 'N/A'}*  📉 NO: *${hasPrice ? (noPrice * 100).toFixed(0) + '%' : 'N/A'}*\n\n_Tap Execute to trade on ZeroDrift_`;
+      // Only keep FUNDED markets with real pricing
+      const live = withPrices
+        .filter((r) => r.status === "fulfilled")
+        .map((r) => r.value)
+        .filter((m) => m.yes_price && m.no_price && m.status === "FUNDED")
+        .sort((a, b) => {
+          // Sort by most interesting: closest to 50/50 first (most uncertain = most alpha potential)
+          const aEdge = Math.abs(0.5 - a.yes_price);
+          const bEdge = Math.abs(0.5 - b.yes_price);
+          return aEdge - bEdge;
+        })
+        .slice(0, 5);
 
-        await bot.sendMessage(chatId, card, {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '⚡ Execute on ZeroDrift', web_app: { url: `${FRONTEND_URL}/trade?slug=${market.slug}` } },
-              { text: '📊 View on Limitless', url: `https://limitless.exchange/markets/${market.slug}` },
-            ]],
-          },
-        }).catch(() => {});
+      if (live.length === 0) {
+        bot.sendMessage(
+          chatId,
+          "📭 No funded markets with live pricing right now\\.",
+          { parse_mode: "MarkdownV2" },
+        );
+        return;
+      }
 
-        await new Promise(r => setTimeout(r, 500));
+      // Send header
+      bot.sendMessage(
+        chatId,
+        `🎯 *${live.length} Live Alpha Opportunities*\n\n_Sorted by edge potential — closest to 50/50 has most room to move_`,
+        { parse_mode: "Markdown" },
+      );
+
+      await new Promise((r) => setTimeout(r, 300));
+
+      // Send each as a card
+      for (let i = 0; i < live.length; i++) {
+        const m = live[i];
+        const yesBar = Math.round(m.yes_price * 10);
+        const noBar = 10 - yesBar;
+        const bar = "🟢".repeat(yesBar) + "🔴".repeat(noBar);
+
+        const card = `*${i + 1}/${live.length}* — *${escapeMarkdown(m.title || m.slug)}*\n\n${bar}\n📈 YES: *${(m.yes_price * 100).toFixed(1)}%*  📉 NO: *${(m.no_price * 100).toFixed(1)}%*\n\n_Tap to execute on ZeroDrift_`;
+
+        await bot
+          .sendMessage(chatId, card, {
+            parse_mode: "Markdown",
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  {
+                    text: `⚡ Trade YES @ ${(m.yes_price * 100).toFixed(0)}%`,
+                    web_app: { url: `${FRONTEND_URL}/trade?slug=${m.slug}` },
+                  },
+                ],
+                [
+                  {
+                    text: "📊 View on Limitless",
+                    url: `https://limitless.exchange/markets/${m.slug}`,
+                  },
+                ],
+              ],
+            },
+          })
+          .catch(() => {});
+
+        await new Promise((r) => setTimeout(r, 400));
       }
     } catch (e) {
       bot.sendMessage(chatId, `❌ Error: ${e.message}`);
@@ -573,24 +650,9 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
             ],
           },
         })
-        .catch(() => {
-          // Fallback without markdown
-          bot.sendMessage(
-            chatId,
-            `Trade Proposal: ${slug} | ${result.side} | $${result.amount_usdc}`,
-            {
-              reply_markup: {
-                inline_keyboard: [
-                  [
-                    {
-                      text: "⚡ Execute on ZeroDrift",
-                      web_app: { url: `${FRONTEND_URL}/trade?slug=${slug}` },
-                    },
-                  ],
-                ],
-              },
-            },
-          );
+        .catch((err) => {
+          console.error("[ZeroDrift] Trade message error:", err.message);
+          bot.sendMessage(chatId, `❌ Failed to send proposal: ${err.message}`);
         });
     } catch (e) {
       bot.sendMessage(chatId, `❌ Failed to generate proposal: ${e.message}`);
