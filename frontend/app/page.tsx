@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount, useSendTransaction } from 'wagmi';
@@ -78,7 +78,7 @@ function HomeInner() {
   const { isConnected } = useAccount();
   const { sendTransaction } = useSendTransaction();
   const searchParams = useSearchParams();
-  const autoLoaded = useRef(false);
+  // const autoLoaded = useRef(false);
 
   const [markets, setMarkets] = useState<Market[]>([]);
   const [news, setNews] = useState<NewsItem[]>([]);
@@ -141,14 +141,16 @@ function HomeInner() {
     } catch {}
   }, []);
 
-  const generateProposal = useCallback(async (market: Market) => {
+  const generateProposal = useCallback(async (market: Market, sideOverride?: 'YES' | 'NO') => {
+    const tradeSide = sideOverride || side;
     setSelectedMarket(market);
     setProposal(null);
     setLoading(true);
+    if (sideOverride) setSide(sideOverride);
     try {
       const res = await axios.post(`${API}/api/trade/propose`, {
         slug: market.slug,
-        side,
+        side: tradeSide,
         amount: parseFloat(amount),
       });
       setProposal(res.data);
@@ -170,21 +172,30 @@ function HomeInner() {
   }, [fetchMarkets, fetchNews]);
 
   useEffect(() => {
-    if (autoLoaded.current) return;
     const slug = searchParams.get('slug');
-    const sideParam = searchParams.get('side');
-    if (slug && markets.length > 0) {
-      const match = markets.find(m => m.slug === slug);
-      if (match) {
-        autoLoaded.current = true;
-        setTimeout(() => {
-          if (sideParam === 'YES' || sideParam === 'NO') setSide(sideParam);
-          generateProposal(match);
-        }, 0);
-      }
-    }
-  }, [searchParams, markets, generateProposal]);
+    const sideParam = searchParams.get('side') as 'YES' | 'NO' | null;
+    if (!slug) return;
 
+    const tryLoad = async () => {
+      // Try to find in existing markets first
+      let match = markets.find(m => m.slug === slug);
+
+      // If not found, fetch directly from API
+      if (!match) {
+        try {
+          const res = await axios.get(`${API}/api/markets/search?keyword=${slug.split('-').slice(0, 3).join(' ')}`);
+          const found = (res.data.markets || []).find((m: Market) => m.slug === slug);
+          if (found) match = found;
+        } catch {}
+      }
+
+      if (match) {
+        generateProposal(match, sideParam || undefined);
+      }
+    };
+
+    tryLoad();
+  }, [generateProposal, markets, searchParams]); // only re-run when URL params change
   const executeProposal = async () => {
     if (!proposal || !isConnected) return;
     setExecuting(true);
