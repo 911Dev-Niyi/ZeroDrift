@@ -172,11 +172,15 @@ function HomeInner() {
   useEffect(() => {
     if (autoLoaded.current) return;
     const slug = searchParams.get('slug');
+    const sideParam = searchParams.get('side');
     if (slug && markets.length > 0) {
       const match = markets.find(m => m.slug === slug);
       if (match) {
         autoLoaded.current = true;
-        setTimeout(() => generateProposal(match), 0);
+        setTimeout(() => {
+          if (sideParam === 'YES' || sideParam === 'NO') setSide(sideParam);
+          generateProposal(match);
+        }, 0);
       }
     }
   }, [searchParams, markets, generateProposal]);
