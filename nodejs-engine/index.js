@@ -464,9 +464,12 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
         return;
       }
 
-      const lines = funded.map((m, i) =>
-        `${i + 1}. *${m.title || m.slug}*\n   \`${m.slug}\`${m.yes_price ? ` — YES: ${(m.yes_price * 100).toFixed(0)}%` : ''}`
-      ).join('\n\n');
+      const lines = funded
+        .map(
+          (m, i) =>
+            `${i + 1}. *${m.title || m.slug}*\n   \`${m.slug}\`${m.yes_price ? ` — YES: ${(m.yes_price * 100).toFixed(0)}%` : ""}`,
+        )
+        .join("\n\n");
 
       bot.sendMessage(
         chatId,
@@ -593,7 +596,13 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
         const noBar = 10 - yesBar;
         const bar = "🟢".repeat(yesBar) + "🔴".repeat(noBar);
 
-        const card = `*${i + 1}/${live.length}* — *${escapeMarkdown(m.title || m.slug)}*\n\n${bar}\n📈 YES: *${(m.yes_price * 100).toFixed(1)}%*  📉 NO: *${(m.no_price * 100).toFixed(1)}%*\n\n_Tap to execute on ZeroDrift_`;
+        const alphaSide = m.yes_price >= m.no_price ? "YES" : "NO";
+        const alphaPct =
+          alphaSide === "YES"
+            ? (m.yes_price * 100).toFixed(0)
+            : (m.no_price * 100).toFixed(0);
+        const alphaButtonLabel = `⚡ Trade ${alphaSide} @ ${alphaPct}%`;
+        const card = `🎯 *Alpha Opportunity*\n\n*${m.title || m.slug}*\n\n${bar}\n📈 YES: *${(m.yes_price * 100).toFixed(1)}%*  📉 NO: *${(m.no_price * 100).toFixed(1)}%*\n\n_Tap to execute on ZeroDrift_`;
 
         await bot
           .sendMessage(chatId, card, {
@@ -602,9 +611,9 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
               inline_keyboard: [
                 [
                   {
-                    text: buttonLabel,
+                    text: alphaButtonLabel,
                     web_app: {
-                      url: `${FRONTEND_URL}/?slug=${m.slug}&side=${m.yes_price >= m.no_price ? "YES" : "NO"}`,
+                      url: `${FRONTEND_URL}/?slug=${m.slug}&side=${alphaSide}`,
                     },
                   },
                 ],
