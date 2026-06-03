@@ -167,8 +167,12 @@ function HomeInner() {
       await fetchNews();
     };
     init();
-    const interval = setInterval(fetchMarkets, 30000);
-    return () => clearInterval(interval);
+    const marketsInterval = setInterval(fetchMarkets, 30000);
+    const newsInterval = setInterval(fetchNews, 30000);
+    return () => {
+      clearInterval(marketsInterval);
+      clearInterval(newsInterval);
+    };
   }, [fetchMarkets, fetchNews]);
 
   useEffect(() => {

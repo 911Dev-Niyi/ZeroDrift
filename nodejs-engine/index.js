@@ -292,7 +292,7 @@ async function pollRSS() {
         });
         if (cryptoMarkets.length > 0) {
           const topMarket = cryptoMarkets[0];
-          const alert = `🚨 *Breaking Alpha*\n\n📰 ${escapeMarkdown(item.title)}\n🔗 ${item.link || ''}\n\n🎯 *Related Market:* ${escapeMarkdown(topMarket.title || topMarket.slug)}\n\n_ZeroDrift detected this opportunity — tap to trade before the market moves_`;
+          const alert = `🚨 *Breaking Alpha*\n\n📰 ${escapeMarkdown(item.title)}\n🔗 ${item.link || ""}\n\n🎯 *Related Market:* ${escapeMarkdown(topMarket.title || topMarket.slug)}\n\n_ZeroDrift detected this opportunity — tap to trade before the market moves_`;
           broadcastAlert(alert, newsTimestamp, topMarket.slug, item.link);
           latestMarkets = markets.markets;
         }
@@ -323,32 +323,48 @@ async function pollRSS() {
 
 function broadcastAlert(message, newsTimestamp, slug, newsLink) {
   if (!bot) return;
-  const ob = runRust(['orderbook', '--slug', slug]).catch(() => null);
+  const ob = runRust(["orderbook", "--slug", slug]).catch(() => null);
   userState.forEach((state, chatId) => {
     if (state.subscribedAt > newsTimestamp) return;
     if (isUserOnCooldown(chatId)) return;
     if (isUserRateLimited(chatId)) return;
     recordAlertSent(chatId);
 
-    ob.then(orderbook => {
+    ob.then((orderbook) => {
       const yesPrice = orderbook?.yes_price;
       const noPrice = orderbook?.no_price;
-      const betterSide = yesPrice && noPrice
-        ? (yesPrice >= noPrice ? `YES @ ${(yesPrice * 100).toFixed(0)}%` : `NO @ ${(noPrice * 100).toFixed(0)}%`)
-        : null;
-      const buttonLabel = betterSide ? `⚡ Trade ${betterSide}` : '⚡ Trade on ZeroDrift';
+      const betterSide =
+        yesPrice && noPrice ? (yesPrice >= noPrice ? "YES" : "NO") : "YES";
+      const betterPct =
+        betterSide === "YES"
+          ? (yesPrice * 100).toFixed(0)
+          : (noPrice * 100).toFixed(0);
+      const buttonLabel = `⚡ Trade ${betterSide} @ ${betterPct}%`;
 
-      bot.sendMessage(chatId, message, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [[
-            { text: buttonLabel, web_app: { url: `${FRONTEND_URL}/?slug=${slug}` } },
-            { text: '📊 View on Limitless', url: `https://limitless.exchange/markets/${slug}` },
-          ], newsLink ? [[
-            { text: '📰 Read Full Story', url: newsLink },
-          ]] : []].filter(row => row.length > 0),
-        },
-      }).catch(() => {});
+      bot
+        .sendMessage(chatId, message, {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: buttonLabel,
+                  web_app: {
+                    url: `${FRONTEND_URL}/?slug=${slug}&side=${betterSide}`,
+                  },
+                },
+                {
+                  text: "📊 View on Limitless",
+                  url: `https://limitless.exchange/markets/${slug}`,
+                },
+              ],
+              ...(newsLink
+                ? [[{ text: "📰 Read Full Story", url: newsLink }]]
+                : []),
+            ],
+          },
+        })
+        .catch(() => {});
     });
   });
 }
@@ -383,7 +399,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
     userState.delete(msg.chat.id);
     bot.sendMessage(
       msg.chat.id,
-      "👋 Unsubscribed from ZeroDrift. Send /start to resubscribe.",
+      "👋 Unsubscribed from ZeroDrift alerts.\n\nYou can still use /markets, /trade, /alphas and /news manually.\n\nSend /start to resubscribe to automatic alerts.",
     );
   });
 
@@ -411,19 +427,19 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
       });
   });
 
- bot.onText(/\/markets/, async (msg) => {
+  bot.onText(/\/markets/, async (msg) => {
     const chatId = msg.chat.id;
-    bot.sendMessage(chatId, '⏳ Scanning Limitless...');
+    bot.sendMessage(chatId, "⏳ Scanning Limitless...");
     try {
       const results = await Promise.all([
-        runRust(['search', '--keyword', 'BTC']),
-        runRust(['search', '--keyword', 'ETH']),
-        runRust(['search', '--keyword', 'SOL']),
+        runRust(["search", "--keyword", "BTC"]),
+        runRust(["search", "--keyword", "ETH"]),
+        runRust(["search", "--keyword", "SOL"]),
       ]);
       const seen = new Set();
       const allMarkets = results
-        .flatMap(r => r.markets || [])
-        .filter(m => {
+        .flatMap((r) => r.markets || [])
+        .filter((m) => {
           if (seen.has(m.slug)) return false;
           seen.add(m.slug);
           return true;
@@ -431,28 +447,32 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
 
       // Fetch orderbook to check status
       const withStatus = await Promise.allSettled(
-        allMarkets.map(async m => {
-          const ob = await runRust(['orderbook', '--slug', m.slug]);
+        allMarkets.map(async (m) => {
+          const ob = await runRust(["orderbook", "--slug", m.slug]);
           return { ...m, status: ob.status, yes_price: ob.yes_price };
-        })
+        }),
       );
 
       const funded = withStatus
-        .filter(r => r.status === 'fulfilled')
-        .map(r => r.value)
-        .filter(m => m.status === 'FUNDED')
+        .filter((r) => r.status === "fulfilled")
+        .map((r) => r.value)
+        .filter((m) => m.status === "FUNDED")
         .slice(0, 5);
 
       if (funded.length === 0) {
-        bot.sendMessage(chatId, '📭 No active funded markets right now.');
+        bot.sendMessage(chatId, "📭 No active funded markets right now.");
         return;
       }
 
       const lines = funded.map((m, i) =>
-        `${i + 1}. *${escapeMarkdown(m.title || m.slug)}*\n   \`${m.slug}\`${m.yes_price ? ` — YES: ${(m.yes_price * 100).toFixed(0)}%` : ''}`
+        `${i + 1}. *${m.title || m.slug}*\n   \`${m.slug}\`${m.yes_price ? ` — YES: ${(m.yes_price * 100).toFixed(0)}%` : ''}`
       ).join('\n\n');
 
-      bot.sendMessage(chatId, `🎯 *Active Funded Markets*\n\n${lines}\n\nUse: /trade <slug> YES 10`, { parse_mode: 'Markdown' });
+      bot.sendMessage(
+        chatId,
+        `🎯 *Active Funded Markets*\n\n${lines}\n\nUse: /trade <slug> YES 10`,
+        { parse_mode: "Markdown" },
+      );
     } catch (e) {
       bot.sendMessage(chatId, `❌ Error: ${e.message}`);
     }
@@ -582,8 +602,10 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
               inline_keyboard: [
                 [
                   {
-                    text: `⚡ Trade YES @ ${(m.yes_price * 100).toFixed(0)}%`,
-                    web_app: { url: `${FRONTEND_URL}/?slug=${m.slug}` },
+                    text: buttonLabel,
+                    web_app: {
+                      url: `${FRONTEND_URL}/?slug=${m.slug}&side=${m.yes_price >= m.no_price ? "YES" : "NO"}`,
+                    },
                   },
                 ],
                 [
@@ -642,8 +664,12 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
         amount,
       ]);
       const hasPrice = result.estimated_price && result.estimated_shares;
-      const marketLabel = result.slug.split('-').slice(0, 5).join(' ').toUpperCase();
-      const reply = `📊 *Trade Proposal*\n\n🎯 *${marketLabel}*\n\n💰 Side: ${result.side}\n💵 Amount: $${result.amount_usdc} USDC\n📈 Price: ${hasPrice ? '$' + result.estimated_price.toFixed(3) : 'N/A'}\n🎰 Shares: ${hasPrice ? result.estimated_shares.toFixed(2) : 'N/A'}\n\n_Review and execute on ZeroDrift_`;
+      const marketLabel = result.slug
+        .split("-")
+        .slice(0, 5)
+        .join(" ")
+        .toUpperCase();
+      const reply = `📊 *Trade Proposal*\n\n🎯 *${marketLabel}*\n\n💰 Side: ${result.side}\n💵 Amount: $${result.amount_usdc} USDC\n📈 Price: ${hasPrice ? "$" + result.estimated_price.toFixed(3) : "N/A"}\n🎰 Shares: ${hasPrice ? result.estimated_shares.toFixed(2) : "N/A"}\n\n_Review and execute on ZeroDrift_`;
       bot
         .sendMessage(chatId, reply, {
           parse_mode: "Markdown",
@@ -652,7 +678,9 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
               [
                 {
                   text: "⚡ Execute on ZeroDrift",
-                  web_app: { url: `${FRONTEND_URL}/?slug=${slug}` },
+                  web_app: {
+                    url: `${FRONTEND_URL}/?slug=${slug}&side=${side.toUpperCase()}`,
+                  },
                 },
                 {
                   text: "📊 View on Limitless",
