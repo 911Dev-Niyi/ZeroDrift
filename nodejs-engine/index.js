@@ -194,13 +194,13 @@ const bot = TELEGRAM_TOKEN
     })
   : null;
 
-if (bot) {
-  bot.on("polling_error", (err) => {
-    if (err.code !== "EFATAL") {
-      console.log(`[ZeroDrift] Polling hiccup (${err.code})`);
-    }
-  });
-}
+// if (bot) {
+//   bot.on("polling_error", (err) => {
+//     if (err.code !== "EFATAL") {
+//       console.log(`[ZeroDrift] Polling hiccup (${err.code})`);
+//     }
+//   });
+// }
 
 // ── Rust Bridge ───────────────────────────────────────────────────────────────
 
@@ -804,8 +804,10 @@ app.post("/api/test-alpha", async (req, res) => {
     let realHeadline = null;
     let realLink = null;
 
-    if (latestNews.length > 0) {
-      // Use most recent unseen headline
+    // Always prefer explicitly provided headline
+    if (req.body.headline) {
+      realHeadline = req.body.headline;
+    } else if (latestNews.length > 0) {
       const recent = latestNews[0];
       realHeadline = recent.title;
       realLink = recent.link;
@@ -868,19 +870,34 @@ app.post("/api/test-alpha", async (req, res) => {
       cryptoMarkets.push(btcMarket);
     }
 
-    // Get live orderbook for top market
-    const topMarket = cryptoMarkets[0];
-    const ob = await runRust(["orderbook", "--slug", topMarket.slug]).catch(
-      () => null,
-    );
+    // Find first FUNDED market with live pricing
+    let topMarket = null;
+    let ob = null;
 
-    // Only use FUNDED markets
-    if (ob && ob.status !== "FUNDED") {
-      return res.json({
-        success: false,
-        message: `Market ${topMarket.slug} is ${ob.status}, not FUNDED`,
-        headline: realHeadline,
-      });
+    for (const m of cryptoMarkets) {
+      const orderbook = await runRust(['orderbook', '--slug', m.slug]).catch(() => null);
+      if (orderbook && orderbook.status === 'FUNDED' && orderbook.yes_price) {
+        topMarket = m;
+        ob = orderbook;
+        break;
+      }
+    }
+
+    // If none funded in keyword results, search BTC directly
+    if (!topMarket) {
+      const btcResults = await runRust(['search', '--keyword', 'BTC']);
+      for (const m of (btcResults.markets || [])) {
+        const orderbook = await runRust(['orderbook', '--slug', m.slug]).catch(() => null);
+        if (orderbook && orderbook.status === 'FUNDED' && orderbook.yes_price) {
+          topMarket = m;
+          ob = orderbook;
+          break;
+        }
+      }
+    }
+
+    if (!topMarket) {
+      return res.json({ success: false, message: 'No funded markets found right now', headline: realHeadline });
     }
 
     const yesPrice = ob?.yes_price;
