@@ -799,23 +799,139 @@ app.get("/api/status", (req, res) => {
 });
 
 app.post("/api/test-alpha", async (req, res) => {
-  const testHeadline =
-    req.body.headline || "Bitcoin breaks $100K as ETF inflows surge";
-  const keyword = extractKeyword(testHeadline);
   try {
-    const markets = await runRust(["search", "--keyword", keyword]);
-    if (markets.count > 0) {
-      const topMarket = markets.markets[0];
-      const alert = `🚨 *Breaking Alpha*\n\n📰 ${escapeMarkdown(testHeadline)}\n\n🎯 *Related Market:* ${escapeMarkdown(topMarket.title || topMarket.slug)}\n\n_ZeroDrift detected this opportunity automatically_`;
-      broadcastAlert(alert, Date.now(), topMarket.slug);
-      res.json({
-        success: true,
-        market: topMarket.slug,
-        subscribers: userState.size,
-      });
+    // Fetch real latest headline from CoinTelegraph
+    let realHeadline = null;
+    let realLink = null;
+
+    if (latestNews.length > 0) {
+      // Use most recent unseen headline
+      const recent = latestNews[0];
+      realHeadline = recent.title;
+      realLink = recent.link;
     } else {
-      res.json({ success: false, message: "No matching market found" });
+      // Fallback: fetch fresh from RSS right now
+      try {
+        const feed = await withTimeout(
+          rssParser.parseURL("https://cointelegraph.com/rss"),
+          RSS_TIMEOUT_MS,
+        );
+        if (feed.items.length > 0) {
+          realHeadline = feed.items[0].title;
+          realLink = feed.items[0].link;
+        }
+      } catch {}
     }
+
+    // Final fallback
+    if (!realHeadline) {
+      realHeadline =
+        req.body.headline ||
+        "Bitcoin breaks $100K as ETF inflows surge to record highs";
+    }
+
+    console.log(`[ZeroDrift] Test alpha using: "${realHeadline}"`);
+
+    const keyword = extractKeyword(realHeadline);
+    console.log(`[ZeroDrift] Extracted keyword: ${keyword}`);
+
+    const markets = await runRust(["search", "--keyword", keyword]);
+
+    // Filter to crypto only funded markets
+    const cryptoMarkets = (markets.markets || []).filter((m) => {
+      const t = (m.title || m.slug).toLowerCase();
+      return (
+        t.includes("up or down") ||
+        t.includes("price") ||
+        t.includes("btc") ||
+        t.includes("eth") ||
+        t.includes("sol") ||
+        t.includes("bitcoin") ||
+        t.includes("ethereum") ||
+        t.includes("crypto") ||
+        t.includes("xrp") ||
+        t.includes("ton")
+      );
+    });
+
+    if (cryptoMarkets.length === 0) {
+      // Fallback to BTC daily if no match
+      const fallback = await runRust(["search", "--keyword", "BTC"]);
+      const btcMarket = (fallback.markets || [])[0];
+      if (!btcMarket) {
+        return res.json({
+          success: false,
+          message: "No markets found",
+          headline: realHeadline,
+        });
+      }
+      cryptoMarkets.push(btcMarket);
+    }
+
+    // Get live orderbook for top market
+    const topMarket = cryptoMarkets[0];
+    const ob = await runRust(["orderbook", "--slug", topMarket.slug]).catch(
+      () => null,
+    );
+
+    // Only use FUNDED markets
+    if (ob && ob.status !== "FUNDED") {
+      return res.json({
+        success: false,
+        message: `Market ${topMarket.slug} is ${ob.status}, not FUNDED`,
+        headline: realHeadline,
+      });
+    }
+
+    const yesPrice = ob?.yes_price;
+    const noPrice = ob?.no_price;
+    const betterSide =
+      yesPrice && noPrice ? (yesPrice >= noPrice ? "YES" : "NO") : "YES";
+    const betterPct =
+      betterSide === "YES"
+        ? (yesPrice * 100).toFixed(0)
+        : (noPrice * 100).toFixed(0);
+
+    const alert = `🚨 *Breaking Alpha*\n\n📰 ${escapeMarkdown(realHeadline)}${realLink ? "\n🔗 " + realLink : ""}\n\n🎯 *Related Market:* ${escapeMarkdown(topMarket.title || topMarket.slug)}\n📊 *Odds:* YES ${yesPrice ? (yesPrice * 100).toFixed(1) + "%" : "N/A"} | NO ${noPrice ? (noPrice * 100).toFixed(1) + "%" : "N/A"}\n\n_ZeroDrift detected this opportunity automatically_`;
+
+    // Broadcast to all subscribed users
+    userState.forEach((state, chatId) => {
+      bot
+        .sendMessage(chatId, alert, {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: `⚡ Trade ${betterSide} @ ${betterPct}%`,
+                  web_app: {
+                    url: `${FRONTEND_URL}/?slug=${topMarket.slug}&side=${betterSide}`,
+                  },
+                },
+                {
+                  text: "📊 View on Limitless",
+                  url: `https://limitless.exchange/markets/${topMarket.slug}`,
+                },
+              ],
+              ...(realLink
+                ? [[{ text: "📰 Read Full Story", url: realLink }]]
+                : []),
+            ],
+          },
+        })
+        .catch(() => {});
+    });
+
+    res.json({
+      success: true,
+      headline: realHeadline,
+      keyword,
+      market: topMarket.slug,
+      marketTitle: topMarket.title,
+      odds: { yes: yesPrice, no: noPrice },
+      side: betterSide,
+      subscribers: userState.size,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

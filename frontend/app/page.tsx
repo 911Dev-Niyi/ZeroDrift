@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount, useSendTransaction } from 'wagmi';
-import { parseEther } from 'viem';
 import axios from 'axios';
 
 const API = process.env.NEXT_PUBLIC_BACKEND_URL;
@@ -205,14 +204,43 @@ function HomeInner() {
     setExecuting(true);
     setStatus('Awaiting wallet signature...');
     try {
-      sendTransaction({
-        to: '0x05c748E2f4DcDe0ec9Fa8DDc40DE6b867f923fa5',
-        value: parseEther('0'),
-        data: '0x',
+      // USDC contract on Base
+      const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as `0x${string}`;
+      const LIMITLESS_CONTRACT = '0x05c748E2f4DcDe0ec9Fa8DDc40DE6b867f923fa5' as `0x${string}`;
+
+      // ERC20 approve ABI
+      const approveAbi = [{
+        name: 'approve',
+        type: 'function',
+        stateMutability: 'nonpayable',
+        inputs: [
+          { name: 'spender', type: 'address' },
+          { name: 'amount', type: 'uint256' },
+        ],
+        outputs: [{ name: '', type: 'bool' }],
+      }] as const;
+
+      // Amount in USDC (6 decimals)
+      const usdcAmount = BigInt(Math.floor(proposal.amount_usdc * 1_000_000));
+
+      // Encode approve(limitless, amount)
+      const { encodeFunctionData } = await import('viem');
+      const data = encodeFunctionData({
+        abi: approveAbi,
+        functionName: 'approve',
+        args: [LIMITLESS_CONTRACT, usdcAmount],
       });
-      setStatus('Transaction submitted! Monitor on Basescan.');
-      // Notify engine to start cooldown for this user
-      const tgChatId = localStorage.getItem('zd_chat_id');
+
+      sendTransaction({
+        to: USDC_BASE,
+        value: BigInt(0),
+        data,
+      });
+
+      setStatus(`Approving $${proposal.amount_usdc} USDC for Limitless — check wallet`);
+
+      // Notify engine for cooldown
+      const tgChatId = typeof window !== 'undefined' ? localStorage.getItem('zd_chat_id') : null;
       if (tgChatId) {
         axios.post(`${API}/api/trade/executed`, { chatId: tgChatId }).catch(() => {});
       }
