@@ -776,12 +776,168 @@ app.post("/api/trade/executed", (req, res) => {
           { parse_mode: "MarkdownV2" },
         )
         .catch(() => {});
+      }
     }
-  }
-  res.json({ success: true });
-});
+    res.json({ success: true });
+  });
+  
+  app.post("/api/test-alpha", async (req, res) => {
+    try {
+      // Fetch real latest headline from CoinTelegraph
+      let realHeadline = null;
+      let realLink = null;
+  
+      // Always prefer explicitly provided headline
+      if (req.body.headline) {
+        realHeadline = req.body.headline;
+      } else if (latestNews.length > 0) {
+        const recent = latestNews[0];
+        realHeadline = recent.title;
+        realLink = recent.link;
+      } else {
+        // Fallback: fetch fresh from RSS right now
+        try {
+          const feed = await withTimeout(
+            rssParser.parseURL("https://cointelegraph.com/rss"),
+            RSS_TIMEOUT_MS,
+          );
+          if (feed.items.length > 0) {
+            realHeadline = feed.items[0].title;
+            realLink = feed.items[0].link;
+          }
+        } catch {}
+      }
+  
+      // Final fallback
+      if (!realHeadline) {
+        realHeadline =
+          req.body.headline ||
+          "Bitcoin breaks $100K as ETF inflows surge to record highs";
+      }
+  
+      console.log(`[ZeroDrift] Test alpha using: "${realHeadline}"`);
+  
+      const keyword = extractKeyword(realHeadline);
+      console.log(`[ZeroDrift] Extracted keyword: ${keyword}`);
+  
+      const markets = await runRust(["search", "--keyword", keyword]);
+  
+      // Filter to crypto only funded markets
+      const cryptoMarkets = (markets.markets || []).filter((m) => {
+        const t = (m.title || m.slug).toLowerCase();
+        return (
+          t.includes("up or down") ||
+          t.includes("price") ||
+          t.includes("btc") ||
+          t.includes("eth") ||
+          t.includes("sol") ||
+          t.includes("bitcoin") ||
+          t.includes("ethereum") ||
+          t.includes("crypto") ||
+          t.includes("xrp") ||
+          t.includes("ton")
+        );
+      });
+  
+      if (cryptoMarkets.length === 0) {
+        // Fallback to BTC daily if no match
+        const fallback = await runRust(["search", "--keyword", "BTC"]);
+        const btcMarket = (fallback.markets || [])[0];
+        if (!btcMarket) {
+          return res.json({
+            success: false,
+            message: "No markets found",
+            headline: realHeadline,
+          });
+        }
+        cryptoMarkets.push(btcMarket);
+      }
+  
+      // Find first FUNDED market with live pricing
+      let topMarket = null;
+      let ob = null;
+  
+      for (const m of cryptoMarkets) {
+        const orderbook = await runRust(['orderbook', '--slug', m.slug]).catch(() => null);
+        if (orderbook && orderbook.status === 'FUNDED' && orderbook.yes_price) {
+          topMarket = m;
+          ob = orderbook;
+          break;
+        }
+      }
+  
+      // If none funded in keyword results, search BTC directly
+      if (!topMarket) {
+        const btcResults = await runRust(['search', '--keyword', 'BTC']);
+        for (const m of (btcResults.markets || [])) {
+          const orderbook = await runRust(['orderbook', '--slug', m.slug]).catch(() => null);
+          if (orderbook && orderbook.status === 'FUNDED' && orderbook.yes_price) {
+            topMarket = m;
+            ob = orderbook;
+            break;
+          }
+        }
+      }
+  
+      if (!topMarket) {
+        return res.json({ success: false, message: 'No funded markets found right now', headline: realHeadline });
+      }
+  
+      const yesPrice = ob?.yes_price;
+      const noPrice = ob?.no_price;
+      const betterSide =
+        yesPrice && noPrice ? (yesPrice >= noPrice ? "YES" : "NO") : "YES";
+      const betterPct =
+        betterSide === "YES"
+          ? (yesPrice * 100).toFixed(0)
+          : (noPrice * 100).toFixed(0);
+  
+      const alert = `🚨 *Breaking Alpha*\n\n📰 ${escapeMarkdown(realHeadline)}${realLink ? "\n🔗 " + realLink : ""}\n\n🎯 *Related Market:* ${escapeMarkdown(topMarket.title || topMarket.slug)}\n📊 *Odds:* YES ${yesPrice ? (yesPrice * 100).toFixed(1) + "%" : "N/A"} | NO ${noPrice ? (noPrice * 100).toFixed(1) + "%" : "N/A"}\n\n_ZeroDrift detected this opportunity automatically_`;
+  
+      // Broadcast to all subscribed users
+      userState.forEach((state, chatId) => {
+        bot
+          .sendMessage(chatId, alert, {
+            parse_mode: "Markdown",
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  {
+                    text: `⚡ Trade ${betterSide} @ ${betterPct}%`,
+                    web_app: {
+                      url: `${FRONTEND_URL}/?slug=${topMarket.slug}&side=${betterSide}`,
+                    },
+                  },
+                  {
+                    text: "📊 View on Limitless",
+                    url: `https://limitless.exchange/markets/${topMarket.slug}`,
+                  },
+                ],
+                ...(realLink
+                  ? [[{ text: "📰 Read Full Story", url: realLink }]]
+                  : []),
+              ],
+            },
+          })
+          .catch(() => {});
+      });
+  
+      res.json({
+        success: true,
+        headline: realHeadline,
+        keyword,
+        market: topMarket.slug,
+        marketTitle: topMarket.title,
+        odds: { yes: yesPrice, no: noPrice },
+        side: betterSide,
+        subscribers: userState.size,
+      });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 
-app.get("/api/status", (req, res) => {
+  app.get("/api/status", (req, res) => {
   const uptime = Math.floor((Date.now() - serverStartTime) / 1000);
   res.json({
     success: true,
@@ -798,160 +954,46 @@ app.get("/api/status", (req, res) => {
   });
 });
 
-app.post("/api/test-alpha", async (req, res) => {
-  try {
-    // Fetch real latest headline from CoinTelegraph
-    let realHeadline = null;
-    let realLink = null;
+app.get("/api/health", (req, res) => {
+  const uptime = Math.floor((Date.now() - serverStartTime) / 1000);
+  const rssMemory = Math.round(process.memoryUsage().heapUsed / 1024 / 1024); //MB
+  const maxMemory = Math.round(process.memoryUsage().heapTotal / 1024 / 1024); // MB
 
-    // Always prefer explicitly provided headline
-    if (req.body.headline) {
-      realHeadline = req.body.headline;
-    } else if (latestNews.length > 0) {
-      const recent = latestNews[0];
-      realHeadline = recent.title;
-      realLink = recent.link;
-    } else {
-      // Fallback: fetch fresh from RSS right now
-      try {
-        const feed = await withTimeout(
-          rssParser.parseURL("https://cointelegraph.com/rss"),
-          RSS_TIMEOUT_MS,
-        );
-        if (feed.items.length > 0) {
-          realHeadline = feed.items[0].title;
-          realLink = feed.items[0].link;
-        }
-      } catch {}
-    }
-
-    // Final fallback
-    if (!realHeadline) {
-      realHeadline =
-        req.body.headline ||
-        "Bitcoin breaks $100K as ETF inflows surge to record highs";
-    }
-
-    console.log(`[ZeroDrift] Test alpha using: "${realHeadline}"`);
-
-    const keyword = extractKeyword(realHeadline);
-    console.log(`[ZeroDrift] Extracted keyword: ${keyword}`);
-
-    const markets = await runRust(["search", "--keyword", keyword]);
-
-    // Filter to crypto only funded markets
-    const cryptoMarkets = (markets.markets || []).filter((m) => {
-      const t = (m.title || m.slug).toLowerCase();
-      return (
-        t.includes("up or down") ||
-        t.includes("price") ||
-        t.includes("btc") ||
-        t.includes("eth") ||
-        t.includes("sol") ||
-        t.includes("bitcoin") ||
-        t.includes("ethereum") ||
-        t.includes("crypto") ||
-        t.includes("xrp") ||
-        t.includes("ton")
-      );
-    });
-
-    if (cryptoMarkets.length === 0) {
-      // Fallback to BTC daily if no match
-      const fallback = await runRust(["search", "--keyword", "BTC"]);
-      const btcMarket = (fallback.markets || [])[0];
-      if (!btcMarket) {
-        return res.json({
-          success: false,
-          message: "No markets found",
-          headline: realHeadline,
-        });
-      }
-      cryptoMarkets.push(btcMarket);
-    }
-
-    // Find first FUNDED market with live pricing
-    let topMarket = null;
-    let ob = null;
-
-    for (const m of cryptoMarkets) {
-      const orderbook = await runRust(['orderbook', '--slug', m.slug]).catch(() => null);
-      if (orderbook && orderbook.status === 'FUNDED' && orderbook.yes_price) {
-        topMarket = m;
-        ob = orderbook;
-        break;
-      }
-    }
-
-    // If none funded in keyword results, search BTC directly
-    if (!topMarket) {
-      const btcResults = await runRust(['search', '--keyword', 'BTC']);
-      for (const m of (btcResults.markets || [])) {
-        const orderbook = await runRust(['orderbook', '--slug', m.slug]).catch(() => null);
-        if (orderbook && orderbook.status === 'FUNDED' && orderbook.yes_price) {
-          topMarket = m;
-          ob = orderbook;
-          break;
-        }
-      }
-    }
-
-    if (!topMarket) {
-      return res.json({ success: false, message: 'No funded markets found right now', headline: realHeadline });
-    }
-
-    const yesPrice = ob?.yes_price;
-    const noPrice = ob?.no_price;
-    const betterSide =
-      yesPrice && noPrice ? (yesPrice >= noPrice ? "YES" : "NO") : "YES";
-    const betterPct =
-      betterSide === "YES"
-        ? (yesPrice * 100).toFixed(0)
-        : (noPrice * 100).toFixed(0);
-
-    const alert = `🚨 *Breaking Alpha*\n\n📰 ${escapeMarkdown(realHeadline)}${realLink ? "\n🔗 " + realLink : ""}\n\n🎯 *Related Market:* ${escapeMarkdown(topMarket.title || topMarket.slug)}\n📊 *Odds:* YES ${yesPrice ? (yesPrice * 100).toFixed(1) + "%" : "N/A"} | NO ${noPrice ? (noPrice * 100).toFixed(1) + "%" : "N/A"}\n\n_ZeroDrift detected this opportunity automatically_`;
-
-    // Broadcast to all subscribed users
-    userState.forEach((state, chatId) => {
-      bot
-        .sendMessage(chatId, alert, {
-          parse_mode: "Markdown",
-          reply_markup: {
-            inline_keyboard: [
-              [
-                {
-                  text: `⚡ Trade ${betterSide} @ ${betterPct}%`,
-                  web_app: {
-                    url: `${FRONTEND_URL}/?slug=${topMarket.slug}&side=${betterSide}`,
-                  },
-                },
-                {
-                  text: "📊 View on Limitless",
-                  url: `https://limitless.exchange/markets/${topMarket.slug}`,
-                },
-              ],
-              ...(realLink
-                ? [[{ text: "📰 Read Full Story", url: realLink }]]
-                : []),
-            ],
-          },
-        })
-        .catch(() => {});
-    });
-
-    res.json({
-      success: true,
-      headline: realHeadline,
-      keyword,
-      market: topMarket.slug,
-      marketTitle: topMarket.title,
-      odds: { yes: yesPrice, no: noPrice },
-      side: betterSide,
+  res.json({
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+    uptime_seconds: uptime,
+    uptime_formatted: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`,
+    memory: {
+      used_mb: rssMemory,
+      total_mb: maxMemory,
+      percent: Math.round((rssMemory / maxMemory) * 100)
+    },
+    services: {
+      telegram_bot: !!bot,
+      rss_feeds: RSS_FEEDS.length,
       subscribers: userState.size,
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+      seen_headlines: seenHeadlines.size,
+    },
+    api_stats: {
+      total_alerts_dispatched: totalAlertsDispatched,
+      total_trades_proposed: totalTradesProposed
+    }
+  });
+});
+
+app.use((err, req, res, next) => {
+  console.error(`[ZeroDrift] ERROR at ${req.method} ${req.path}:`, err.message);
+  res.status(500).json({ success: false, error: err.message });
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[ZeroDrift] Unhandled Rejection:", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("[ZeroDrift] Uncaught Exception:", error);
+  process.exit(1);
 });
 
 // ── Graceful Shutdown ─────────────────────────────────────────────────────────
