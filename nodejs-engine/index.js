@@ -222,21 +222,38 @@ function cooldownRemaining(chatId) {
   return Math.max(0, Math.ceil(remaining / 60000)); // in minutes
 }
 
+function sendSafeError(chatId, context = 'operation') {
+  bot.sendMessage(chatId, `❌ Error during ${context}. Please try again later.`);
+}
+
 // Telegram Bot
 
 const bot = TELEGRAM_TOKEN
   ? new TelegramBot(TELEGRAM_TOKEN, {
-      polling: { autoStart: true, params: { timeout: 10 } },
+      polling: { autoStart: false }, // Don't auto-start
     })
   : null;
 
-// if (bot) {
-//   bot.on("polling_error", (err) => {
-//     if (err.code !== "EFATAL") {
-//       console.log(`[ZeroDrift] Polling hiccup (${err.code})`);
-//     }
-//   });
-// }
+if (bot) {
+  // Stop any existing polling before starting new one
+  bot.stopPolling().then(() => {
+    bot.startPolling();
+    console.log('[ZeroDrift] Telegram bot polling started');
+  }).catch(err => {
+    console.warn('[ZeroDrift] Polling stop warning (expected on cold start):', err.message);
+    bot.startPolling();
+  });
+
+  bot.on('polling_error', (err) => {
+    if (err.code === 'ETELEGRAM') {
+      console.error('[ZeroDrift] Telegram conflict — another instance running');
+    } else {
+      console.error('[ZeroDrift] Telegram polling error:', err.code);
+    }
+  });
+} else {
+  console.warn('[ZeroDrift] TELEGRAM_TOKEN not set — bot disabled');
+}
 
 // Rust bridge
 
@@ -428,7 +445,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
     );
   } catch (e) {
     console.error('[ZeroDrift] Start command error:', e.message);
-    bot.sendMessage(msg.chat.id, `Error: ${e.message}`);
+    sendSafeError(chatId, 'Initialization');
   }
 });
 
@@ -468,7 +485,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
     });
   } catch (e) {
     console.error('[ZeroDrift] Status command error:', e.message);
-    bot.sendMessage(msg.chat.id, `❌ Error: ${e.message}`);
+    sendSafeError(chatId, 'Status check');
   }
 });
 
@@ -522,7 +539,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
         { parse_mode: "Markdown" },
       );
     } catch (e) {
-      bot.sendMessage(chatId, `❌ Error: ${e.message}`);
+      sendSafeError(chatId, 'Funded markets lookup');
     }
   });
 
@@ -676,7 +693,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
         await new Promise((r) => setTimeout(r, 400));
       }
     } catch (e) {
-      bot.sendMessage(chatId, `❌ Error: ${e.message}`);
+      sendSafeError(chatId, 'Live opportunities lookup');
     }
   });
 
@@ -725,7 +742,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
       bot.sendMessage(chatId, `Your Positions:\n\n${simple}`);
     });
   } catch (e) {
-    bot.sendMessage(chatId, `❌ Error: ${e.message}`);
+    sendSafeError(chatId, 'Position history fetch');
   }
 });
 
@@ -798,7 +815,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
           bot.sendMessage(chatId, `❌ Failed to send proposal: ${err.message}`);
         });
     } catch (e) {
-      bot.sendMessage(chatId, `❌ Failed to generate proposal: ${e.message}`);
+      sendSafeError(chatId, 'Trade proposal generation');
     }
   });
 
@@ -1058,15 +1075,14 @@ app.post("/api/trade/executed", async (req, res) => {
   const uptime = Math.floor((Date.now() - serverStartTime) / 1000);
   try {
     const headlineCount = await db.getHeadlineCount();
-    const subscriberCount = await db.getSubscriberCount();
+
   res.json({
     success: true,
     status: "online",
     uptime: `${Math.floor(uptime / 60)}m ${uptime % 60}s`,
-    subscribers: userState.size,
     newsCount: latestNews.length,
     marketsCount: latestMarkets.length,
-    headlinesSeen: seenHeadlines.size,
+    headlinesSeen: headlineCount,
     feedCount: RSS_FEEDS.length,
     telegramActive: !!bot,
     totalAlertsDispatched,
@@ -1078,32 +1094,34 @@ app.post("/api/trade/executed", async (req, res) => {
 }
 });
 
-app.get("/api/health", (req, res) => {
+app.get("/api/health", async (req, res) => {
   const uptime = Math.floor((Date.now() - serverStartTime) / 1000);
-  const rssMemory = Math.round(process.memoryUsage().heapUsed / 1024 / 1024); //MB
-  const maxMemory = Math.round(process.memoryUsage().heapTotal / 1024 / 1024); // MB
+  const rssMemory = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+  const maxMemory = Math.round(process.memoryUsage().heapTotal / 1024 / 1024);
 
-  res.json({
-    status: "healthy",
-    timestamp: new Date().toISOString(),
-    uptime_seconds: uptime,
-    uptime_formatted: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`,
-    memory: {
-      used_mb: rssMemory,
-      total_mb: maxMemory,
-      percent: Math.round((rssMemory / maxMemory) * 100)
-    },
-    services: {
-      telegram_bot: !!bot,
-      rss_feeds: RSS_FEEDS.length,
-      subscribers: userState.size,
-      seen_headlines: seenHeadlines.size,
-    },
-    api_stats: {
-      total_alerts_dispatched: totalAlertsDispatched,
-      total_trades_proposed: totalTradesProposed
-    }
-  });
+  try {
+    const headlineCount = await db.getHeadlineCount();
+    
+    res.json({
+      status: "healthy",
+      timestamp: new Date().toISOString(),
+      uptime_seconds: uptime,
+      uptime_formatted: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`,
+      memory: {
+        used_mb: rssMemory,
+        total_mb: maxMemory,
+        percent: Math.round((rssMemory / maxMemory) * 100)
+      },
+      services: {
+        telegram_bot: !!bot,
+        rss_feeds: RSS_FEEDS.length,
+        seen_headlines: headlineCount,
+      }
+    });
+  } catch (error) {
+    console.error("[ZeroDrift] Health check error:", error);
+    res.status(500).json({ status: "error", error: "Health check failed" });
+  }
 });
 
 app.use((err, req, res, next) => {
