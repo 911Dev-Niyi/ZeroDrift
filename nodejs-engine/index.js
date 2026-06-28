@@ -836,29 +836,47 @@ app.post("/api/trade/propose", async (req, res) => {
 // Called from frontend after wallet execution
 app.post("/api/trade/executed", async (req, res) => {
   const { chatId, walletAddress, marketSlug, marketTitle, side, amount, estimatedPrice, estimatedShares, txHash } = req.body;
-  if (chatId) {
-    await recordTradeExecuted(chatId);
+  
+  if (!chatId) return res.status(400).json({ error: 'chatId required' });
+  
+  const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
+  
+  try {
+    await recordTradeExecuted(numericChatId);
     
-    if (walletAddress && marketSlug) {
-      await db.recordTrade(chatId, walletAddress, marketSlug, marketTitle, side, amount, estimatedPrice || 0, estimatedShares || 0, txHash || null);
-      console.log(`[ZeroDrift] Trade recorded for ${chatId}: ${marketSlug} ${side} $${amount}`);
+    if (walletAddress && marketSlug && amount) {
+      await db.recordTrade(
+        numericChatId,
+        walletAddress,
+        marketSlug,
+        marketTitle || '',
+        side || 'YES',
+        parseFloat(amount),
+        parseFloat(estimatedPrice) || 0,
+        parseFloat(estimatedShares) || 0,
+        txHash || null
+      );
+      console.log(`[ZeroDrift] Trade recorded for ${numericChatId}: ${marketSlug} ${side} $${amount}`);
     }
-    const remaining = cooldownRemaining(chatId);
-    console.log(
-      `[ZeroDrift] Trade executed for ${chatId} — cooldown ${remaining}min`,
-    );
+    
+    const user = await db.getUser(numericChatId);
+    const remaining = cooldownRemaining(user);
+    console.log(`[ZeroDrift] Trade executed for ${numericChatId} — cooldown ${remaining}min`);
+    
     if (bot) {
-      bot
-        .sendMessage(
-          chatId,
-          `✅ *Trade Executed*\n\nZeroDrift is now in cooldown mode for 2 hours\\.\n\nYour alerts are paused — go touch grass 🌿`,
-          { parse_mode: "MarkdownV2" },
-        )
-        .catch(() => {});
-      }
+      bot.sendMessage(
+        numericChatId,
+        `✅ *Trade Executed*\n\nZeroDrift is now in cooldown mode for 2 hours\\.\n\nYour alerts are paused — go touch grass 🌿`,
+        { parse_mode: "MarkdownV2" },
+      ).catch(() => {});
     }
-    res.json({ success: true });
-  });
+  } catch (err) {
+    console.error('[ZeroDrift] Trade execution error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+  
+  res.json({ success: true });
+});
   
   app.post("/api/test-alpha", async (req, res) => {
     try {
