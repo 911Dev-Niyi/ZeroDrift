@@ -345,13 +345,15 @@ for (const item of allItems) {
     ].slice(0, 50);
 
     if (newItems.length > 0) {
-      console.log(
-        `[ZeroDrift] +${newItems.length} headlines | ${successCount}/${RSS_FEEDS.length} feeds OK | total seen: ${seenHeadlines.size}`,
-      );
+      const headlineCount = await db.getHeadlineCount();
+console.log(
+  `[ZeroDrift] +${newItems.length} headlines | ${successCount}/${RSS_FEEDS.length} feeds OK | total seen: ${headlineCount}`,
+);
     } else {
-      console.log(
-        `[ZeroDrift] ✓ Watching ${seenHeadlines.size} headlines across ${successCount}/${RSS_FEEDS.length} feeds`,
-      );
+      const headlineCount = await db.getHeadlineCount();
+console.log(
+  `[ZeroDrift] ✓ Watching ${headlineCount} headlines across ${successCount}/${RSS_FEEDS.length} feeds`,
+);
     }
   } catch (e) {
     console.error("[ZeroDrift] RSS poll error:", e.message);
