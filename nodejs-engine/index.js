@@ -126,8 +126,6 @@ function withTimeout(promise, ms) {
 }
 
 // State
-
-const db = require('./db');
 let latestNews = [];
 let latestMarkets = [];
 let serverStartTime = Date.now();
