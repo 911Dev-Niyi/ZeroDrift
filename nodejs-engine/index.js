@@ -397,12 +397,17 @@ async function broadcastAlert(alert, newsTimestamp, slug, newsLink) {
   }
 }
 
-// ── Bot Commands ──────────────────────────────────────────────────────────────
+// Bot Commands
 
 if (bot) {
   bot.onText(/\/start/, async (msg) => {
-    const chatId = msg.chat.id;
-    const user = await db.getUser(chatId);
+  const chatId = msg.chat.id;
+  try {
+    let user = await db.getUser(chatId);
+    if (!user) {
+      user = await db.createUser(chatId);
+    }
+    
     bot.sendMessage(
       chatId,
       `⚡ *ZeroDrift Online*\n\nAutonomous Limitless alpha catalyst\\.
@@ -421,7 +426,11 @@ I monitor breaking crypto news across 4 sources and instantly surface related pr
 _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing a trade\\._`,
       { parse_mode: "MarkdownV2" },
     );
-  });
+  } catch (e) {
+    console.error('[ZeroDrift] Start command error:', e.message);
+    bot.sendMessage(msg.chat.id, `Error: ${e.message}`);
+  }
+});
 
   bot.onText(/\/stop/, async (msg) => {
     await db.deleteUser(msg.chat.id);
@@ -433,23 +442,34 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
 
   bot.onText(/\/status/, async (msg) => {
   const chatId = msg.chat.id;
-  const user = await db.getUser(chatId);
-  const onCooldown = isUserOnCooldown(chatId, user);
-  const remaining = cooldownRemaining(user);
-  const headlineCount = await db.getHeadlineCount();
   
-  const lines = [
-    `⚡ *ZeroDrift Status*`,
-    ``,
-    `📡 Subscribed: ✅`,
-    `🔔 Alerts sent this hour: ${user.alerts_this_hour}/${MAX_ALERTS_PER_HOUR}`,
-    `🧊 Cooldown: ${onCooldown ? `Active \\(${remaining} min remaining\\)` : "None"}`,
-    `📰 Headlines watched: ${headlineCount}`,
-    `🎯 Markets tracked: ${latestMarkets.length}`,
-  ];
-  bot.sendMessage(chatId, lines.join("\n"), { parse_mode: "MarkdownV2" }).catch(() => {
-    bot.sendMessage(chatId, `Status: ${user.alerts_this_hour}/${MAX_ALERTS_PER_HOUR} alerts | Cooldown: ${onCooldown ? remaining + "min" : "none"}`);
-  });
+  try {
+    let user = await db.getUser(chatId);
+    if (!user) {
+      user = await db.createUser(chatId);
+    }
+    
+    const onCooldown = isUserOnCooldown(chatId, user);
+    const remaining = cooldownRemaining(user);
+    const headlineCount = await db.getHeadlineCount();
+    
+    const lines = [
+      `⚡ *ZeroDrift Status*`,
+      ``,
+      `📡 Subscribed: ✅`,
+      `🔔 Alerts sent this hour: ${user.alerts_this_hour || 0}/${MAX_ALERTS_PER_HOUR}`,
+      `🧊 Cooldown: ${onCooldown ? `Active \\(${remaining} min remaining\\)` : "None"}`,
+      `📰 Headlines watched: ${headlineCount}`,
+      `🎯 Markets tracked: ${latestMarkets.length}`,
+    ];
+    
+    bot.sendMessage(chatId, lines.join("\n"), { parse_mode: "MarkdownV2" }).catch(() => {
+      bot.sendMessage(chatId, `Status: ${user.alerts_this_hour || 0}/${MAX_ALERTS_PER_HOUR} alerts | Cooldown: ${onCooldown ? remaining + "min" : "none"}`);
+    });
+  } catch (e) {
+    console.error('[ZeroDrift] Status command error:', e.message);
+    bot.sendMessage(msg.chat.id, `❌ Error: ${e.message}`);
+  }
 });
 
   bot.onText(/\/markets/, async (msg) => {
