@@ -5,12 +5,13 @@ const TelegramBot = require("node-telegram-bot-api");
 const { spawn } = require("child_process");
 const cors = require("cors");
 const path = require("path");
+const db = require('./db');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ── Config ────────────────────────────────────────────────────────────────────
+// Config
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const PORT = process.env.PORT || 3001;
@@ -51,8 +52,7 @@ const KEYWORDS = [
   "dump",
 ];
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
+// Helpers
 function escapeMarkdown(text) {
   return (text || "").replace(/[_*[\]()~`>#+\-=|{}.!$]/g, "\\$&");
 }
@@ -125,29 +125,67 @@ function withTimeout(promise, ms) {
   ]);
 }
 
-// ── State ─────────────────────────────────────────────────────────────────────
+// State
 
-// chatId -> { subscribedAt, lastTradeAt, alertsThisHour, hourWindowStart }
-const userState = new Map();
-const seenHeadlines = new Set();
+const db = require('./db');
 let latestNews = [];
 let latestMarkets = [];
 let serverStartTime = Date.now();
 let totalAlertsDispatched = 0;
 let totalTradesProposed = 0;
 
-// ── User State Helpers ────────────────────────────────────────────────────────
+// User State Helpers
 
-function getUser(chatId) {
-  if (!userState.has(chatId)) {
-    userState.set(chatId, {
-      subscribedAt: Date.now(),
-      lastTradeAt: null,
-      alertsThisHour: 0,
-      hourWindowStart: Date.now(),
-    });
+async function getUser(chatId) {
+  let user = await db.getUser(chatId);
+  if (!user) {
+    user = await db.createUser(chatId);
   }
-  return userState.get(chatId);
+  return user;
+}
+
+function isUserOnCooldown(chatId, user) {
+  if (!user?.last_trade_at) return false;
+  return Date.now() - new Date(user.last_trade_at).getTime() < COOLDOWN_MS;
+}
+
+function isUserRateLimited(user) {
+  const now = Date.now();
+  const windowStart = new Date(user.hour_window_start).getTime();
+  // Reset window if an hour has passed
+  if (now - windowStart > 3600000) {
+    return false;
+  }
+  return user.alerts_this_hour >= MAX_ALERTS_PER_HOUR;
+}
+
+async function recordAlertSent(chatId) {
+  const user = await db.getUser(chatId);
+  const now = Date.now();
+  const windowStart = new Date(user.hour_window_start).getTime();
+  
+  let newAlertCount = user.alerts_this_hour + 1;
+  let newWindowStart = user.hour_window_start;
+  
+  // Reset window if an hour has passed
+  if (now - windowStart > 3600000) {
+    newAlertCount = 1;
+    newWindowStart = new Date();
+  }
+  
+  await db.updateUserAlerts(chatId, newAlertCount, newWindowStart);
+  totalAlertsDispatched++;
+}
+
+async function recordTradeExecuted(chatId) {
+  await db.recordTradeExecuted(chatId);
+  totalTradesProposed++;
+}
+
+function cooldownRemaining(user) {
+  if (!user?.last_trade_at) return 0;
+  const remaining = COOLDOWN_MS - (Date.now() - new Date(user.last_trade_at).getTime());
+  return Math.max(0, Math.ceil(remaining / 60000)); // in minutes
 }
 
 function isUserOnCooldown(chatId) {
@@ -186,7 +224,7 @@ function cooldownRemaining(chatId) {
   return Math.max(0, Math.ceil(remaining / 60000)); // in minutes
 }
 
-// ── Telegram Bot ──────────────────────────────────────────────────────────────
+// Telegram Bot
 
 const bot = TELEGRAM_TOKEN
   ? new TelegramBot(TELEGRAM_TOKEN, {
@@ -202,7 +240,7 @@ const bot = TELEGRAM_TOKEN
 //   });
 // }
 
-// ── Rust Bridge ───────────────────────────────────────────────────────────────
+// Rust bridge
 
 function runRust(args) {
   return withTimeout(
@@ -227,7 +265,7 @@ function runRust(args) {
   );
 }
 
-// ── RSS Monitor ───────────────────────────────────────────────────────────────
+// RSS MONITOR
 
 const rssParser = new RSSParser({ timeout: RSS_TIMEOUT_MS });
 
@@ -248,12 +286,15 @@ async function pollRSS() {
       .filter((r) => r.status === "fulfilled")
       .flatMap((r) => r.value.items);
 
-    const newItems = allItems.filter((item) => {
-      const key = item.title?.trim();
-      if (!key || seenHeadlines.has(key)) return false;
-      seenHeadlines.add(key);
-      return true;
-    });
+    const newItems = [];
+for (const item of allItems) {
+  const key = item.title?.trim();
+  if (!key) continue;
+  const exists = await db.hasHeadline(key);
+  if (exists) continue;
+  await db.addHeadline(key, item.link, item.pubDate);
+  newItems.push(item);
+}
 
     for (const item of newItems) {
       const newsTimestamp = new Date(item.pubDate || Date.now()).getTime();
@@ -319,63 +360,49 @@ async function pollRSS() {
   }
 }
 
-// ── Broadcast ─────────────────────────────────────────────────────────────────
+// Broadcast alert to all subscribers
 
-function broadcastAlert(message, newsTimestamp, slug, newsLink) {
+async function broadcastAlert(alert, newsTimestamp, slug, newsLink) {
   if (!bot) return;
-  const ob = runRust(["orderbook", "--slug", slug]).catch(() => null);
-  userState.forEach((state, chatId) => {
-    if (state.subscribedAt > newsTimestamp) return;
-    if (isUserOnCooldown(chatId)) return;
-    if (isUserRateLimited(chatId)) return;
-    recordAlertSent(chatId);
+  
+  const subscribers = await db.getAllSubscribers();
+  const ob = await runRust(['orderbook', '--slug', slug]).catch(() => null);
+  
+  for (const chatId of subscribers) {
+    const user = await db.getUser(chatId);
+    if (new Date(user.subscribed_at).getTime() > newsTimestamp) continue;
+    if (isUserOnCooldown(chatId, user)) continue;
+    if (isUserRateLimited(user)) continue;
+    
+    await recordAlertSent(chatId);
 
-    ob.then((orderbook) => {
-      const yesPrice = orderbook?.yes_price;
-      const noPrice = orderbook?.no_price;
-      const betterSide =
-        yesPrice && noPrice ? (yesPrice >= noPrice ? "YES" : "NO") : "YES";
-      const betterPct =
-        betterSide === "YES"
-          ? (yesPrice * 100).toFixed(0)
-          : (noPrice * 100).toFixed(0);
-      const buttonLabel = `⚡ Trade ${betterSide} @ ${betterPct}%`;
+    const yesPrice = ob?.yes_price;
+    const noPrice = ob?.no_price;
+    const betterSide = yesPrice && noPrice ? (yesPrice >= noPrice ? "YES" : "NO") : "YES";
+    const betterPct = betterSide === "YES" ? (yesPrice * 100).toFixed(0) : (noPrice * 100).toFixed(0);
+    const buttonLabel = `⚡ Trade ${betterSide} @ ${betterPct}%`;
 
-      bot
-        .sendMessage(chatId, message, {
-          parse_mode: "Markdown",
-          reply_markup: {
-            inline_keyboard: [
-              [
-                {
-                  text: buttonLabel,
-                  web_app: {
-                    url: `${FRONTEND_URL}/?slug=${slug}&side=${betterSide}`,
-                  },
-                },
-                {
-                  text: "📊 View on Limitless",
-                  url: `https://limitless.exchange/markets/${slug}`,
-                },
-              ],
-              ...(newsLink
-                ? [[{ text: "📰 Read Full Story", url: newsLink }]]
-                : []),
-            ],
-          },
-        })
-        .catch(() => {});
-    });
-  });
+    bot.sendMessage(chatId, alert, {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: buttonLabel, web_app: { url: `${FRONTEND_URL}/?slug=${slug}&side=${betterSide}` } },
+            { text: "📊 View on Limitless", url: `https://limitless.exchange/markets/${slug}` },
+          ],
+          ...(newsLink ? [[{ text: "📰 Read Full Story", url: newsLink }]] : []),
+        ],
+      },
+    }).catch(() => {});
+  }
 }
 
 // ── Bot Commands ──────────────────────────────────────────────────────────────
 
 if (bot) {
-  bot.onText(/\/start/, (msg) => {
+  bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
-    getUser(chatId).subscribedAt = Date.now();
-    userState.get(chatId).subscribedAt = Date.now();
+    const user = await db.getUser(chatId);
     bot.sendMessage(
       chatId,
       `⚡ *ZeroDrift Online*\n\nAutonomous Limitless alpha catalyst\\.
@@ -395,37 +422,34 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
     );
   });
 
-  bot.onText(/\/stop/, (msg) => {
-    userState.delete(msg.chat.id);
+  bot.onText(/\/stop/, async (msg) => {
+    await db.deleteUser(msg.chat.id);
     bot.sendMessage(
       msg.chat.id,
       "👋 Unsubscribed from ZeroDrift alerts.\n\nYou can still use /markets, /trade, /alphas and /news manually.\n\nSend /start to resubscribe to automatic alerts.",
     );
   });
 
-  bot.onText(/\/status/, (msg) => {
-    const chatId = msg.chat.id;
-    const user = getUser(chatId);
-    const onCooldown = isUserOnCooldown(chatId);
-    const remaining = cooldownRemaining(chatId);
-    const lines = [
-      `⚡ *ZeroDrift Status*`,
-      ``,
-      `📡 Subscribed: ✅`,
-      `🔔 Alerts sent this hour: ${user.alertsThisHour}/${MAX_ALERTS_PER_HOUR}`,
-      `🧊 Cooldown: ${onCooldown ? `Active \\(${remaining} min remaining\\)` : "None"}`,
-      `📰 Headlines watched: ${seenHeadlines.size}`,
-      `🎯 Markets tracked: ${latestMarkets.length}`,
-    ];
-    bot
-      .sendMessage(chatId, lines.join("\n"), { parse_mode: "MarkdownV2" })
-      .catch(() => {
-        bot.sendMessage(
-          chatId,
-          `Status: ${user.alertsThisHour}/${MAX_ALERTS_PER_HOUR} alerts | Cooldown: ${onCooldown ? remaining + "min" : "none"}`,
-        );
-      });
+  bot.onText(/\/status/, async (msg) => {
+  const chatId = msg.chat.id;
+  const user = await db.getUser(chatId);
+  const onCooldown = isUserOnCooldown(chatId, user);
+  const remaining = cooldownRemaining(user);
+  const headlineCount = await db.getHeadlineCount();
+  
+  const lines = [
+    `⚡ *ZeroDrift Status*`,
+    ``,
+    `📡 Subscribed: ✅`,
+    `🔔 Alerts sent this hour: ${user.alerts_this_hour}/${MAX_ALERTS_PER_HOUR}`,
+    `🧊 Cooldown: ${onCooldown ? `Active \\(${remaining} min remaining\\)` : "None"}`,
+    `📰 Headlines watched: ${headlineCount}`,
+    `🎯 Markets tracked: ${latestMarkets.length}`,
+  ];
+  bot.sendMessage(chatId, lines.join("\n"), { parse_mode: "MarkdownV2" }).catch(() => {
+    bot.sendMessage(chatId, `Status: ${user.alerts_this_hour}/${MAX_ALERTS_PER_HOUR} alerts | Cooldown: ${onCooldown ? remaining + "min" : "none"}`);
   });
+});
 
   bot.onText(/\/markets/, async (msg) => {
     const chatId = msg.chat.id;
@@ -481,7 +505,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
     }
   });
 
-  bot.onText(/\/news/, (msg) => {
+  bot.onText(/\/news/, async (msg) => {
     if (latestNews.length === 0) {
       bot.sendMessage(
         msg.chat.id,
@@ -760,10 +784,13 @@ app.post("/api/trade/propose", async (req, res) => {
 });
 
 // Called from frontend after wallet execution
-app.post("/api/trade/executed", (req, res) => {
-  const { chatId } = req.body;
+app.post("/api/trade/executed", async (req, res) => {
+  const { chatId, walletAddress, marketSlug, marketTitle, side, amount } = req.body;
   if (chatId) {
-    recordTradeExecuted(chatId);
+    await recordTradeExecuted(chatId);
+    if (walletAddress && marketSlug) {
+      await db.recordTrade(chatId, walletAddress, marketSlug, marketTitle, side, amount, 0, 0);
+    }
     const remaining = cooldownRemaining(chatId);
     console.log(
       `[ZeroDrift] Trade executed for ${chatId} — cooldown ${remaining}min`,
@@ -937,8 +964,11 @@ app.post("/api/trade/executed", (req, res) => {
     }
   });
 
-  app.get("/api/status", (req, res) => {
+  app.get("/api/status", async (req, res) => {
   const uptime = Math.floor((Date.now() - serverStartTime) / 1000);
+  try {
+    const headlineCount = await db.getHeadlineCount();
+    const subscriberCount = await db.getSubscriberCount();
   res.json({
     success: true,
     status: "online",
@@ -952,6 +982,10 @@ app.post("/api/trade/executed", (req, res) => {
     totalAlertsDispatched,
     totalTradesProposed,
   });
+} catch (error) {
+  console.error("[ZeroDrift] Status API error:", error);
+  res.status(500).json({ success: false, error: "Failed to retrieve status" });
+}
 });
 
 app.get("/api/health", (req, res) => {
@@ -1014,7 +1048,16 @@ async function shutdown() {
 
 app.listen(PORT, () => {
   console.log(`[ZeroDrift] Engine running on port ${PORT}`);
-  console.log(`[sZeroDrift] Monitoring ${RSS_FEEDS.length} RSS feeds`);
+
+  try {
+    await db.initializeDatabase();
+    console.log('[ZeroDrift] Database connected and initialized');
+  } catch (err) {
+    console.error('[ZeroDrift] Failed to initialize database:', err);
+    process.exit(1);
+  }
+
+  console.log(`[ZeroDrift] Monitoring ${RSS_FEEDS.length} RSS feeds`);
   console.log(
     `[ZeroDrift] Cooldown: ${COOLDOWN_MS / 3600000}h | Rate limit: ${MAX_ALERTS_PER_HOUR}/hour`,
   );
