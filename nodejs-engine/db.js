@@ -80,8 +80,13 @@ async function initializeDatabase() {
 // User Queries
 
 async function getUser(chatId) {
-  const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
+    const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId; // Ensure chatId is a number
   const result = await pool.query('SELECT * FROM users WHERE chat_id = $1', [numericChatId]);
+  return result.rows[0] || null;
+}
+
+async function getUserByWallet(walletAddress) {
+  const result = await pool.query('SELECT * FROM users WHERE wallet_address = $1', [walletAddress]);
   return result.rows[0] || null;
 }
 
@@ -161,8 +166,8 @@ async function getHeadlineCount() {
 // Trade Queries
 
 async function recordTrade(chatId, walletAddress, marketSlug, marketTitle, side, amountUsdc, estimatedPrice, estimatedShares, txHash = null) {
-  const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
-  
+    const numericChatId = typeof chatId === 'object' ? chatId.chat_id: parseInt(chatId, 10); // Ensure chatId is a number
+    
   const result = await pool.query(
     `INSERT INTO executed_trades (chat_id, wallet_address, market_slug, market_title, side, amount_usdc, estimated_price, estimated_shares, tx_hash)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
