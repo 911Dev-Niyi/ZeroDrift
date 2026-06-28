@@ -80,43 +80,43 @@ async function initializeDatabase() {
 // User Queries
 
 async function getUser(chatId) {
-  const result = await pool.query('SELECT * FROM users WHERE chat_id = $1', [chatId]);
-  return result.rows[0] || null;
-}
-
-async function getUserByWallet(walletAddress) {
-  const result = await pool.query('SELECT * FROM users WHERE wallet_address = $1', [walletAddress]);
+  const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
+  const result = await pool.query('SELECT * FROM users WHERE chat_id = $1', [numericChatId]);
   return result.rows[0] || null;
 }
 
 async function createUser(chatId) {
+  const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
   const result = await pool.query(
     'INSERT INTO users (chat_id, subscribed_at, hour_window_start) VALUES ($1, NOW(), NOW()) RETURNING *',
-    [chatId]
+    [numericChatId]
   );
   return result.rows[0];
 }
 
 async function updateUserWallet(chatId, walletAddress) {
+  const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
   const result = await pool.query(
     'UPDATE users SET wallet_address = $1, updated_at = NOW() WHERE chat_id = $2 RETURNING *',
-    [walletAddress, chatId]
+    [walletAddress, numericChatId]
   );
   return result.rows[0];
 }
 
 async function updateUserAlerts(chatId, alertsThisHour, hourWindowStart) {
+  const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
   const result = await pool.query(
     'UPDATE users SET alerts_this_hour = $1, hour_window_start = $2, updated_at = NOW() WHERE chat_id = $3 RETURNING *',
-    [alertsThisHour, hourWindowStart, chatId]
+    [alertsThisHour, hourWindowStart, numericChatId]
   );
   return result.rows[0];
 }
 
 async function recordTradeExecuted(chatId) {
+  const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
   const result = await pool.query(
     'UPDATE users SET last_trade_at = NOW(), updated_at = NOW() WHERE chat_id = $1 RETURNING *',
-    [chatId]
+    [numericChatId]
   );
   return result.rows[0];
 }
@@ -127,7 +127,8 @@ async function getAllSubscribers() {
 }
 
 async function deleteUser(chatId) {
-  await pool.query('DELETE FROM users WHERE chat_id = $1', [chatId]);
+  const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
+  await pool.query('DELETE FROM users WHERE chat_id = $1', [numericChatId]);
 }
 
 // Headline Queries
@@ -160,11 +161,13 @@ async function getHeadlineCount() {
 // Trade Queries
 
 async function recordTrade(chatId, walletAddress, marketSlug, marketTitle, side, amountUsdc, estimatedPrice, estimatedShares, txHash = null) {
+  const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
+  
   const result = await pool.query(
     `INSERT INTO executed_trades (chat_id, wallet_address, market_slug, market_title, side, amount_usdc, estimated_price, estimated_shares, tx_hash)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING *`,
-    [chatId, walletAddress, marketSlug, marketTitle, side, amountUsdc, estimatedPrice, estimatedShares, txHash]
+    [numericChatId, walletAddress, marketSlug, marketTitle, side, amountUsdc, estimatedPrice, estimatedShares, txHash]
   );
   return result.rows[0];
 }
@@ -178,9 +181,10 @@ async function getTradesByWallet(walletAddress, limit = 50) {
 }
 
 async function getTradesByChatId(chatId, limit = 50) {
+  const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
   const result = await pool.query(
     'SELECT * FROM executed_trades WHERE chat_id = $1 ORDER BY executed_at DESC LIMIT $2',
-    [chatId, limit]
+    [numericChatId, limit]
   );
   return result.rows;
 }
