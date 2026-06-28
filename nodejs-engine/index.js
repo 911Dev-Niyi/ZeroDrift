@@ -413,6 +413,7 @@ I monitor breaking crypto news across 4 sources and instantly surface related pr
 /markets \\- Live opportunities
 /news \\- Latest headlines  
 /alphas \\- On\\-demand alpha opportunities
+/positions \\- Your trade history
 /trade \\<slug\\> \\<YES\\|NO\\> \\<amount\\> \\- Trade proposal
 /status \\- Your account status
 /stop \\- Unsubscribe
@@ -659,6 +660,55 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
     }
   });
 
+  bot.onText(/\/positions/, async (msg) => {
+  const chatId = msg.chat.id;
+  bot.sendMessage(chatId, "⏳ Fetching your position history...");
+
+  try {
+    const trades = await db.getTradesByChatId(chatId, 20);
+
+    if (trades.length === 0) {
+      bot.sendMessage(chatId, "📭 No executed trades yet.\n\nExecute a trade to see your positions here.");
+      return;
+    }
+
+    // Calculate P&L for each trade (simple: amount * (current_price - entry_price))
+    // For now, show basic info
+    let message = `📊 *Your Positions*\n\n`;
+    
+    trades.forEach((trade, i) => {
+      const pnl = (trade.estimated_shares * trade.estimated_price - trade.amount_usdc).toFixed(2);
+      const pnlColor = pnl >= 0 ? "📈" : "📉";
+      
+      message += `${i + 1}. *${trade.market_title || trade.market_slug}*\n`;
+      message += `   Side: ${trade.side}\n`;
+      message += `   Amount: $${parseFloat(trade.amount_usdc).toFixed(2)} USDC\n`;
+      message += `   Shares: ${parseFloat(trade.estimated_shares).toFixed(4)}\n`;
+      message += `   Entry: $${parseFloat(trade.estimated_price).toFixed(4)}\n`;
+      message += `   Status: ${trade.status}\n`;
+      message += `   ${pnlColor} P&L: $${pnl}\n`;
+      message += `   Executed: ${new Date(trade.executed_at).toLocaleString()}\n`;
+      
+      if (trade.tx_hash) {
+        message += `   🔗 TX: \`${trade.tx_hash.slice(0, 10)}...\`\n`;
+      }
+      message += `\n`;
+    });
+
+    message += `_Showing last ${trades.length} trades_`;
+
+    bot.sendMessage(chatId, message, { parse_mode: "Markdown" }).catch(() => {
+      // Fallback if markdown fails
+      const simple = trades.map((t, i) => 
+        `${i + 1}. ${t.market_title} | ${t.side} | $${t.amount_usdc} | ${t.status}`
+      ).join('\n');
+      bot.sendMessage(chatId, `Your Positions:\n\n${simple}`);
+    });
+  } catch (e) {
+    bot.sendMessage(chatId, `❌ Error: ${e.message}`);
+  }
+});
+
   bot.onText(/\/trade (.+)/, async (msg, match) => {
     const chatId = msg.chat.id;
     const parts = match[1].trim().split(/\s+/);
@@ -785,11 +835,13 @@ app.post("/api/trade/propose", async (req, res) => {
 
 // Called from frontend after wallet execution
 app.post("/api/trade/executed", async (req, res) => {
-  const { chatId, walletAddress, marketSlug, marketTitle, side, amount } = req.body;
+  const { chatId, walletAddress, marketSlug, marketTitle, side, amount, estimatedPrice, estimatedShares, txHash } = req.body;
   if (chatId) {
     await recordTradeExecuted(chatId);
+    
     if (walletAddress && marketSlug) {
-      await db.recordTrade(chatId, walletAddress, marketSlug, marketTitle, side, amount, 0, 0);
+      await db.recordTrade(chatId, walletAddress, marketSlug, marketTitle, side, amount, estimatedPrice || 0, estimatedShares || 0, txHash || null);
+      console.log(`[ZeroDrift] Trade recorded for ${chatId}: ${marketSlug} ${side} $${amount}`);
     }
     const remaining = cooldownRemaining(chatId);
     console.log(

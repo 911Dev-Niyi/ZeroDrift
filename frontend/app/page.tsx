@@ -75,6 +75,7 @@ function ConfidenceBar({ yes, no }: { yes: number; no: number }) {
 
 function HomeInner() {
   const { isConnected } = useAccount();
+  const { address: account } = useAccount();
   const { sendTransaction } = useSendTransaction();
   const searchParams = useSearchParams();
   // const autoLoaded = useRef(false);
@@ -242,8 +243,18 @@ function HomeInner() {
       // Notify engine for cooldown
       const tgChatId = typeof window !== 'undefined' ? localStorage.getItem('zd_chat_id') : null;
       if (tgChatId) {
-        axios.post(`${API}/api/trade/executed`, { chatId: tgChatId }).catch(() => {});
-      }
+  axios.post(`${API}/api/trade/executed`, { 
+    chatId: tgChatId,
+    walletAddress: account,
+    marketSlug: selectedMarket?.slug,
+    marketTitle: selectedMarket?.title,
+    side: side,
+    amount: proposal?.amount_usdc,
+    estimatedPrice: proposal?.estimated_price,
+    estimatedShares: proposal?.estimated_shares,
+    txHash: null 
+  }).catch(() => {});
+}
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Unknown error';
       setStatus(`Error: ${msg}`);
