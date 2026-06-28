@@ -1044,7 +1044,7 @@ async function shutdown() {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
+app.listen(PORT, async() => {
   console.log(`[ZeroDrift] Engine running on port ${PORT}`);
 
   try {
