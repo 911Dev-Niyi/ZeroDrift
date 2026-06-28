@@ -16,6 +16,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "node-telegram-bot-api": "^0.67.0",
+    "pg": "^8.22.0",
     "rss-parser": "^3.13.0"
   }
 }
