@@ -871,6 +871,134 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
   console.log("[ZeroDrift] Telegram bot active");
 }
 
+// Callback Query Handler for Inline Buttons
+
+bot.on('callback_query', async (query) => {
+  const chatId = query.message.chat.id;
+  const data = query.data;
+  
+  try {
+    // Acknowledge the button click
+    bot.answerCallbackQuery(query.id).catch(() => {});
+
+    // Handle alphas pagination
+    if (data.startsWith('alphas_')) {
+      const pageStr = data.split('_')[1];
+      
+      if (!security.isValidPageNumber(pageStr)) {
+        bot.sendMessage(chatId, "❌ Invalid page.").catch(() => {});
+        return;
+      }
+
+      const page = parseInt(pageStr, 10);
+      const pageSize = 5;
+
+      const keywords = ["BTC", "ETH", "SOL", "XRP", "Trump", "ETF", "SEC"];
+      const results = await Promise.allSettled(
+        keywords.map((kw) => runRust(["search", "--keyword", kw])),
+      );
+
+      const seen = new Set();
+      const allMarkets = results
+        .filter((r) => r.status === "fulfilled")
+        .flatMap((r) => r.value.markets || [])
+        .filter((m) => {
+          const t = (m.title || m.slug).toLowerCase();
+          if (seen.has(m.slug)) return false;
+          seen.add(m.slug);
+          return (
+            t.includes("up or down") || t.includes("price") || t.includes("btc") ||
+            t.includes("eth") || t.includes("sol") || t.includes("xrp") ||
+            t.includes("trump") || t.includes("etf") || t.includes("bitcoin") ||
+            t.includes("ethereum") || t.includes("crypto")
+          );
+        });
+
+      if (allMarkets.length === 0) {
+        bot.sendMessage(chatId, "📭 No markets found.").catch(() => {});
+        return;
+      }
+
+      const withPrices = await Promise.allSettled(
+        allMarkets.map(async (m) => {
+          const ob = await runRust(["orderbook", "--slug", m.slug]);
+          return { ...m, yes_price: ob.yes_price, no_price: ob.no_price, status: ob.status };
+        }),
+      );
+
+      const live = withPrices
+        .filter((r) => r.status === "fulfilled")
+        .map((r) => r.value)
+        .filter((m) => m.yes_price && m.no_price && m.status === "FUNDED")
+        .sort((a, b) => Math.abs(0.5 - a.yes_price) - Math.abs(0.5 - b.yes_price))
+        .slice(0, 100);
+
+      if (live.length === 0) {
+        bot.sendMessage(chatId, "📭 No funded markets.").catch(() => {});
+        return;
+      }
+
+      const totalPages = Math.ceil(live.length / pageSize);
+      if (page > totalPages) {
+        bot.sendMessage(chatId, `❌ Page ${page} doesn't exist. Max: ${totalPages}`).catch(() => {});
+        return;
+      }
+
+      const start = (page - 1) * pageSize;
+      const pageMarkets = live.slice(start, start + pageSize);
+
+      // Send header
+      bot.sendMessage(
+        chatId,
+        `🎯 *Alpha Opportunities* — Page ${page}/${totalPages}`,
+        { parse_mode: "Markdown" }
+      ).catch(() => {});
+
+      await new Promise((r) => setTimeout(r, 300));
+
+      // Send each market
+      for (const m of pageMarkets) {
+        const yesBar = Math.round(m.yes_price * 10);
+        const noBar = 10 - yesBar;
+        const bar = "🟢".repeat(yesBar) + "🔴".repeat(noBar);
+
+        const alphaSide = m.yes_price >= m.no_price ? "YES" : "NO";
+        const alphaPct = alphaSide === "YES" 
+          ? (m.yes_price * 100).toFixed(0) 
+          : (m.no_price * 100).toFixed(0);
+
+        const card = `🎯 *${m.title || m.slug}*\n\n${bar}\n📈 YES: *${(m.yes_price * 100).toFixed(1)}%* | 📉 NO: *${(m.no_price * 100).toFixed(1)}%*`;
+
+        await bot.sendMessage(chatId, card, {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: `⚡ Trade ${alphaSide} @ ${alphaPct}%`, web_app: { url: `${FRONTEND_URL}/?slug=${m.slug}&side=${alphaSide}` } }],
+              [{ text: "📊 View on Limitless", url: `https://limitless.exchange/markets/${m.slug}` }],
+            ],
+          },
+        }).catch(() => {});
+
+        await new Promise((r) => setTimeout(r, 400));
+      }
+
+      // Footer with navigation
+      const navButtons = [];
+      if (page > 1) navButtons.push({ text: "⬅️ Previous", callback_data: `alphas_${page - 1}` });
+      if (page < totalPages) navButtons.push({ text: "➡️ Next", callback_data: `alphas_${page + 1}` });
+
+      if (navButtons.length > 0) {
+        await bot.sendMessage(chatId, `Page ${page}/${totalPages}`, {
+          reply_markup: { inline_keyboard: [navButtons] }
+        }).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.error('[ZeroDrift] Callback query error:', err.message);
+    bot.answerCallbackQuery(query.id, { text: '❌ Error processing request', show_alert: true }).catch(() => {});
+  }
+});
+
 // REST API
 
 app.get("/api/news", (req, res) => {
