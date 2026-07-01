@@ -6,10 +6,30 @@ const { spawn } = require("child_process");
 const cors = require("cors");
 const path = require("path");
 const db = require('./db');
-
+const security = require('./sec.middleware');
+const helmet =  require('helmet');
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Security Middleware
+
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+    },
+  },
+  hsts: { maxAge: 31536000, includeSubDomains: true },
+}));
+
+app.use(security.logRequest);
+app.use(security.requestTimeout(30000));
+app.use(cors(security.corsOptions));
+app.use(express.json({ limit: '1mb' })); // Limit payload size
+app.use(security.rateLimitMiddleware('default'));
 
 // Config
 
@@ -116,6 +136,43 @@ function extractKeyword(headline) {
   return headline.split(" ").slice(0, 3).join(" ");
 }
 
+// Rate Limiting
+const rateLimitMap = new Map(); //ChatId -> {count, resetTime}
+const RATE_LIMIT = { requests: 30, windowMs: 60000 }; //30 requests per minute
+
+function checkRateLimit(identifier) {
+  const now = Date.now();
+  const record = rateLimitMap.get(identifier);
+
+  if (!record || now > record.resetTime) {
+    rateLimitMap.set(identifier, { coun: 1, resetTime: now + RATE_LIMIT.windowMs });
+    return true;
+  }
+
+  if (record.count >= RATE_LIMIT,RATE_LIMIT.requests) {
+    return false;
+  }
+
+  record.count ++;
+  return true;
+}
+
+// CORS
+
+app.use(cors({
+  origin: [
+    process.env.FRONTEND_URL || 'http://localhost:3000',
+    'https://zero-drift-eight.vercel.app'
+  ],
+  credentials: true,
+}));
+
+// Input Validation
+
+function isValidPageNumber(page) {
+  const num = parseInt(page, 10);
+  return !isNaN(num) && num > 0 && num <= 100;
+}
 function withTimeout(promise, ms) {
   return Promise.race([
     promise,
@@ -560,142 +617,134 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
     });
   });
 
-  bot.onText(/\/alphas/, async (msg) => {
-    const chatId = msg.chat.id;
-    bot.sendMessage(chatId, "⚡ *Scanning alpha across all markets\\.\\.\\.*", {
-      parse_mode: "MarkdownV2",
-    });
+  bot.onText(/\/alphas(?:\s+(\d+))?/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const pageStr = match[1] || '1';
+  
+  // Rate limit check
+  if (!checkRateLimit(chatId)) {
+    bot.sendMessage(chatId, "⏳ Too many requests. Wait a minute.").catch(() => {});
+    return;
+  }
+  
+  // Validate page number
+  if (!isValidPageNumber(pageStr)) {
+    bot.sendMessage(chatId, "❌ Invalid page. Use: /alphas or /alphas 2").catch(() => {});
+    return;
+  }
+  
+  const page = parseInt(pageStr, 10);
+  const pageSize = 5;
+  
+  try {
+    bot.sendMessage(chatId, `⚡ Scanning alpha (page ${page})...`, { parse_mode: "MarkdownV2" });
 
-    try {
-      // Search across a broad set of keywords for diversity
-      const keywords = ["BTC", "ETH", "SOL", "XRP", "Trump", "ETF", "SEC"];
-      const results = await Promise.allSettled(
-        keywords.map((kw) => runRust(["search", "--keyword", kw])),
-      );
+    const keywords = ["BTC", "ETH", "SOL", "XRP", "Trump", "ETF", "SEC"];
+    const results = await Promise.allSettled(
+      keywords.map((kw) => runRust(["search", "--keyword", kw])),
+    );
 
-      // Collect and deduplicate
-      const seen = new Set();
-      const allMarkets = results
-        .filter((r) => r.status === "fulfilled")
-        .flatMap((r) => r.value.markets || [])
-        .filter((m) => {
-          const t = (m.title || m.slug).toLowerCase();
-          if (seen.has(m.slug)) return false;
-          seen.add(m.slug);
-          // Only crypto/finance markets, no sports
-          return (
-            t.includes("up or down") ||
-            t.includes("price") ||
-            t.includes("btc") ||
-            t.includes("eth") ||
-            t.includes("sol") ||
-            t.includes("xrp") ||
-            t.includes("trump") ||
-            t.includes("etf") ||
-            t.includes("bitcoin") ||
-            t.includes("ethereum") ||
-            t.includes("crypto")
-          );
-        });
-
-      if (allMarkets.length === 0) {
-        bot.sendMessage(
-          chatId,
-          "📭 No active markets found right now\\. Try again in a few minutes\\.",
-          { parse_mode: "MarkdownV2" },
+    const seen = new Set();
+    const allMarkets = results
+      .filter((r) => r.status === "fulfilled")
+      .flatMap((r) => r.value.markets || [])
+      .filter((m) => {
+        const t = (m.title || m.slug).toLowerCase();
+        if (seen.has(m.slug)) return false;
+        seen.add(m.slug);
+        return (
+          t.includes("up or down") || t.includes("price") || t.includes("btc") ||
+          t.includes("eth") || t.includes("sol") || t.includes("xrp") ||
+          t.includes("trump") || t.includes("etf") || t.includes("bitcoin") ||
+          t.includes("ethereum") || t.includes("crypto")
         );
-        return;
-      }
+      });
 
-      // Fetch orderbook for all markets in parallel
-      const withPrices = await Promise.allSettled(
-        allMarkets.map(async (m) => {
-          const ob = await runRust(["orderbook", "--slug", m.slug]);
-          return {
-            ...m,
-            yes_price: ob.yes_price,
-            no_price: ob.no_price,
-            status: ob.status,
-          };
-        }),
-      );
-
-      // Only keep FUNDED markets with real pricing
-      const live = withPrices
-        .filter((r) => r.status === "fulfilled")
-        .map((r) => r.value)
-        .filter((m) => m.yes_price && m.no_price && m.status === "FUNDED")
-        .sort((a, b) => {
-          // Sort by most interesting: closest to 50/50 first (most uncertain = most alpha potential)
-          const aEdge = Math.abs(0.5 - a.yes_price);
-          const bEdge = Math.abs(0.5 - b.yes_price);
-          return aEdge - bEdge;
-        })
-        .slice(0, 5);
-
-      if (live.length === 0) {
-        bot.sendMessage(
-          chatId,
-          "📭 No funded markets with live pricing right now\\.",
-          { parse_mode: "MarkdownV2" },
-        );
-        return;
-      }
-
-      // Send header
-      bot.sendMessage(
-        chatId,
-        `🎯 *${live.length} Live Alpha Opportunities*\n\n_Sorted by edge potential — closest to 50/50 has most room to move_`,
-        { parse_mode: "Markdown" },
-      );
-
-      await new Promise((r) => setTimeout(r, 300));
-
-      // Send each as a card
-      for (let i = 0; i < live.length; i++) {
-        const m = live[i];
-        const yesBar = Math.round(m.yes_price * 10);
-        const noBar = 10 - yesBar;
-        const bar = "🟢".repeat(yesBar) + "🔴".repeat(noBar);
-
-        const alphaSide = m.yes_price >= m.no_price ? "YES" : "NO";
-        const alphaPct =
-          alphaSide === "YES"
-            ? (m.yes_price * 100).toFixed(0)
-            : (m.no_price * 100).toFixed(0);
-        const alphaButtonLabel = `⚡ Trade ${alphaSide} @ ${alphaPct}%`;
-        const card = `🎯 *Alpha Opportunity*\n\n*${m.title || m.slug}*\n\n${bar}\n📈 YES: *${(m.yes_price * 100).toFixed(1)}%*  📉 NO: *${(m.no_price * 100).toFixed(1)}%*\n\n_Tap to execute on ZeroDrift_`;
-
-        await bot
-          .sendMessage(chatId, card, {
-            parse_mode: "Markdown",
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  {
-                    text: alphaButtonLabel,
-                    web_app: {
-                      url: `${FRONTEND_URL}/?slug=${m.slug}&side=${alphaSide}`,
-                    },
-                  },
-                ],
-                [
-                  {
-                    text: "📊 View on Limitless",
-                    url: `https://limitless.exchange/markets/${m.slug}`,
-                  },
-                ],
-              ],
-            },
-          })
-          .catch(() => {});
-
-        await new Promise((r) => setTimeout(r, 400));
-      }
-    } catch (e) {
-      sendSafeError(chatId, 'Live opportunities lookup');
+    if (allMarkets.length === 0) {
+      bot.sendMessage(chatId, "📭 No markets found.", { parse_mode: "MarkdownV2" }).catch(() => {});
+      return;
     }
-  });
+
+    // Fetch orderbooks for all
+    const withPrices = await Promise.allSettled(
+      allMarkets.map(async (m) => {
+        const ob = await runRust(["orderbook", "--slug", m.slug]);
+        return { ...m, yes_price: ob.yes_price, no_price: ob.no_price, status: ob.status };
+      }),
+    );
+
+    const live = withPrices
+      .filter((r) => r.status === "fulfilled")
+      .map((r) => r.value)
+      .filter((m) => m.yes_price && m.no_price && m.status === "FUNDED")
+      .sort((a, b) => Math.abs(0.5 - a.yes_price) - Math.abs(0.5 - b.yes_price))
+      .slice(0, 100); // Get top 100 for pagination
+
+    if (live.length === 0) {
+      bot.sendMessage(chatId, "📭 No funded markets.", { parse_mode: "MarkdownV2" }).catch(() => {});
+      return;
+    }
+
+    // Paginate
+    const totalPages = Math.ceil(live.length / pageSize);
+    if (page > totalPages) {
+      bot.sendMessage(chatId, `❌ Page ${page} doesn't exist. Max: ${totalPages}`).catch(() => {});
+      return;
+    }
+
+    const start = (page - 1) * pageSize;
+    const pageMarkets = live.slice(start, start + pageSize);
+
+    // Send header
+    bot.sendMessage(
+      chatId,
+      `🎯 *Alpha Opportunities* — Page ${page}/${totalPages}`,
+      { parse_mode: "Markdown" }
+    ).catch(() => {});
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Send each market
+    for (const m of pageMarkets) {
+      const yesBar = Math.round(m.yes_price * 10);
+      const noBar = 10 - yesBar;
+      const bar = "🟢".repeat(yesBar) + "🔴".repeat(noBar);
+
+      const alphaSide = m.yes_price >= m.no_price ? "YES" : "NO";
+      const alphaPct = alphaSide === "YES" 
+        ? (m.yes_price * 100).toFixed(0) 
+        : (m.no_price * 100).toFixed(0);
+
+      const card = `🎯 *${m.title || m.slug}*\n\n${bar}\n📈 YES: *${(m.yes_price * 100).toFixed(1)}%* | 📉 NO: *${(m.no_price * 100).toFixed(1)}%*`;
+
+      await bot.sendMessage(chatId, card, {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: `⚡ Trade ${alphaSide} @ ${alphaPct}%`, web_app: { url: `${FRONTEND_URL}/?slug=${m.slug}&side=${alphaSide}` } }],
+            [{ text: "📊 View on Limitless", url: `https://limitless.exchange/markets/${m.slug}` }],
+          ],
+        },
+      }).catch(() => {});
+
+      await new Promise((r) => setTimeout(r, 400));
+    }
+
+    // Footer with navigation
+    const navButtons = [];
+    if (page > 1) navButtons.push({ text: "⬅️ Previous", callback_data: `alphas_${page - 1}` });
+    if (page < totalPages) navButtons.push({ text: "➡️ Next", callback_data: `alphas_${page + 1}` });
+
+    if (navButtons.length > 0) {
+      await bot.sendMessage(chatId, `Page ${page}/${totalPages}`, {
+        reply_markup: { inline_keyboard: [navButtons] }
+      }).catch(() => {});
+    }
+  } catch (e) {
+    console.error('[ZeroDrift] Alphas command error:', e.message);
+    sendSafeError(chatId, 'Alpha scan');
+  }
+});
 
   bot.onText(/\/positions/, async (msg) => {
   const chatId = msg.chat.id;
@@ -822,26 +871,31 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
   console.log("[ZeroDrift] Telegram bot active");
 }
 
-// ── REST API ──────────────────────────────────────────────────────────────────
+// REST API
 
 app.get("/api/news", (req, res) => {
   res.json({ success: true, news: latestNews });
 });
 
-app.get("/api/markets/search", async (req, res) => {
+app.get("/api/markets/search", security.rateLimitMiddleware('api'), async (req, res) => {
   const { keyword } = req.query;
   if (!keyword) return res.status(400).json({ error: "keyword required" });
   try {
-    const result = await runRust(["search", "--keyword", keyword]);
+    const sanitized = security.sanitizeInput(keyword);
+    const result = await runRust(["search", "--keyword", sanitized]);
     res.json(result);
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
 });
 
-app.get("/api/markets/orderbook", async (req, res) => {
+app.get("/api/markets/orderbook", security.rateLimitMiddleware('api'), async (req, res) => {
   const { slug } = req.query;
   if (!slug) return res.status(400).json({ error: "slug required" });
+  if (!security.isValidSlug(slug)) {
+    return res.status(400).json({ error: "Invalid market slug" });
+  }
+
   try {
     const result = await runRust(["orderbook", "--slug", slug]);
     res.json(result);
@@ -850,10 +904,19 @@ app.get("/api/markets/orderbook", async (req, res) => {
   }
 });
 
-app.post("/api/trade/propose", async (req, res) => {
+app.post("/api/trade/propose", security.rateLimitMiddleware('api'), async (req, res) => {
   const { slug, side, amount } = req.body;
-  if (!slug || !side || !amount)
-    return res.status(400).json({ error: "slug, side, amount required" });
+
+   if (!slug || !security.isValidSlug(slug)) {
+    return res.status(400).json({ error: "Invalid market slug" });
+  }
+  if (!security.isValidSide(side)) {
+    return res.status(400).json({ error: "Side must be YES or NO" });
+  }
+  if (!security.isValidAmount(amount)) {
+    return res.status(400).json({ error: "Invalid amount (max $10,000)" });
+  }
+
   try {
     const result = await runRust([
       "trade",
@@ -866,15 +929,30 @@ app.post("/api/trade/propose", async (req, res) => {
     ]);
     res.json(result);
   } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
+    res.status(500).json({ success: false, error: "Trade Proposal failed", details: e.message });
   }
 });
 
 // Called from frontend after wallet execution
-app.post("/api/trade/executed", async (req, res) => {
+app.post("/api/trade/executed", security.rateLimitMiddleware('trade'),  async (req, res) => {
+
   const { chatId, walletAddress, marketSlug, marketTitle, side, amount, estimatedPrice, estimatedShares, txHash } = req.body;
   
-  if (!chatId) return res.status(400).json({ error: 'chatId required' });
+  if (!chatId || !security.isValidChatId(chatId)) {
+    return res.status(400).json({ error: "Invalid chatId" });
+  }
+  if (walletAddress && !security.isValidWalletAddress(walletAddress)) {
+    return res.status(400).json({ error: "Invalid wallet address" });
+  }
+  if (marketSlug && !security.isValidSlug(marketSlug)) {
+    return res.status(400).json({ error: "Invalid market slug" });
+  }
+  if (side && !security.isValidSide(side)) {
+    return res.status(400).json({ error: "Invalid side" });
+  }
+  if (amount && !security.isValidAmount(amount)) {
+    return res.status(400).json({ error: "Invalid amount" });
+  }
   
   const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
   
@@ -887,6 +965,7 @@ app.post("/api/trade/executed", async (req, res) => {
         walletAddress,
         marketSlug,
         marketTitle || '',
+        security.sanitizeInput(marketTitle || ''),
         side || 'YES',
         parseFloat(amount),
         parseFloat(estimatedPrice) || 0,
