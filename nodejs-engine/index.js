@@ -5,31 +5,33 @@ const TelegramBot = require("node-telegram-bot-api");
 const { spawn } = require("child_process");
 const cors = require("cors");
 const path = require("path");
-const db = require('./db');
-const security = require('./sec.middleware');
-const helmet =  require('helmet');
+const db = require("./db");
+const security = require("./sec.middleware");
+const helmet = require("helmet");
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 // Security Middleware
 
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+      },
     },
-  },
-  hsts: { maxAge: 31536000, includeSubDomains: true },
-}));
+    hsts: { maxAge: 31536000, includeSubDomains: true },
+  }),
+);
 
 app.use(security.logRequest);
 app.use(security.requestTimeout(30000));
 app.use(cors(security.corsOptions));
-app.use(express.json({ limit: '1mb' })); // Limit payload size
-app.use(security.rateLimitMiddleware('default'));
+app.use(express.json({ limit: "1mb" })); // Limit payload size
+app.use(security.rateLimitMiddleware("default"));
 
 // Config
 
@@ -145,27 +147,32 @@ function checkRateLimit(identifier) {
   const record = rateLimitMap.get(identifier);
 
   if (!record || now > record.resetTime) {
-    rateLimitMap.set(identifier, { coun: 1, resetTime: now + RATE_LIMIT.windowMs });
+    rateLimitMap.set(identifier, {
+      coun: 1,
+      resetTime: now + RATE_LIMIT.windowMs,
+    });
     return true;
   }
 
-  if (record.count >= RATE_LIMIT,RATE_LIMIT.requests) {
+  if ((record.count >= RATE_LIMIT, RATE_LIMIT.requests)) {
     return false;
   }
 
-  record.count ++;
+  record.count++;
   return true;
 }
 
 // CORS
 
-app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL || 'http://localhost:3000',
-    'https://zero-drift-eight.vercel.app'
-  ],
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: [
+      process.env.FRONTEND_URL || "http://localhost:3000",
+      "https://zero-drift-eight.vercel.app",
+    ],
+    credentials: true,
+  }),
+);
 
 // Input Validation
 
@@ -218,16 +225,16 @@ async function recordAlertSent(chatId) {
   const user = await db.getUser(chatId);
   const now = Date.now();
   const windowStart = new Date(user.hour_window_start).getTime();
-  
+
   let newAlertCount = user.alerts_this_hour + 1;
   let newWindowStart = user.hour_window_start;
-  
+
   // Reset window if an hour has passed
   if (now - windowStart > 3600000) {
     newAlertCount = 1;
     newWindowStart = new Date();
   }
-  
+
   await db.updateUserAlerts(chatId, newAlertCount, newWindowStart);
   totalAlertsDispatched++;
 }
@@ -239,7 +246,8 @@ async function recordTradeExecuted(chatId) {
 
 function cooldownRemaining(user) {
   if (!user?.last_trade_at) return 0;
-  const remaining = COOLDOWN_MS - (Date.now() - new Date(user.last_trade_at).getTime());
+  const remaining =
+    COOLDOWN_MS - (Date.now() - new Date(user.last_trade_at).getTime());
   return Math.max(0, Math.ceil(remaining / 60000)); // in minutes
 }
 
@@ -279,8 +287,11 @@ function cooldownRemaining(chatId) {
   return Math.max(0, Math.ceil(remaining / 60000)); // in minutes
 }
 
-function sendSafeError(chatId, context = 'operation') {
-  bot.sendMessage(chatId, `❌ Error during ${context}. Please try again later.`);
+function sendSafeError(chatId, context = "operation") {
+  bot.sendMessage(
+    chatId,
+    `❌ Error during ${context}. Please try again later.`,
+  );
 }
 
 // Telegram Bot
@@ -293,23 +304,29 @@ const bot = TELEGRAM_TOKEN
 
 if (bot) {
   // Stop any existing polling before starting new one
-  bot.stopPolling().then(() => {
-    bot.startPolling();
-    console.log('[ZeroDrift] Telegram bot polling started');
-  }).catch(err => {
-    console.warn('[ZeroDrift] Polling stop warning (expected on cold start):', err.message);
-    bot.startPolling();
-  });
+  bot
+    .stopPolling()
+    .then(() => {
+      bot.startPolling();
+      console.log("[ZeroDrift] Telegram bot polling started");
+    })
+    .catch((err) => {
+      console.warn(
+        "[ZeroDrift] Polling stop warning (expected on cold start):",
+        err.message,
+      );
+      bot.startPolling();
+    });
 
-  bot.on('polling_error', (err) => {
-    if (err.code === 'ETELEGRAM') {
-      console.error('[ZeroDrift] Telegram conflict — another instance running');
+  bot.on("polling_error", (err) => {
+    if (err.code === "ETELEGRAM") {
+      console.error("[ZeroDrift] Telegram conflict — another instance running");
     } else {
-      console.error('[ZeroDrift] Telegram polling error:', err.code);
+      console.error("[ZeroDrift] Telegram polling error:", err.code);
     }
   });
 } else {
-  console.warn('[ZeroDrift] TELEGRAM_TOKEN not set — bot disabled');
+  console.warn("[ZeroDrift] TELEGRAM_TOKEN not set — bot disabled");
 }
 
 // Rust bridge
@@ -359,14 +376,14 @@ async function pollRSS() {
       .flatMap((r) => r.value.items);
 
     const newItems = [];
-for (const item of allItems) {
-  const key = item.title?.trim();
-  if (!key) continue;
-  const exists = await db.hasHeadline(key);
-  if (exists) continue;
-  await db.addHeadline(key, item.link, item.pubDate);
-  newItems.push(item);
-}
+    for (const item of allItems) {
+      const key = item.title?.trim();
+      if (!key) continue;
+      const exists = await db.hasHeadline(key);
+      if (exists) continue;
+      await db.addHeadline(key, item.link, item.pubDate);
+      newItems.push(item);
+    }
 
     for (const item of newItems) {
       const newsTimestamp = new Date(item.pubDate || Date.now()).getTime();
@@ -420,14 +437,14 @@ for (const item of allItems) {
 
     if (newItems.length > 0) {
       const headlineCount = await db.getHeadlineCount();
-console.log(
-  `[ZeroDrift] +${newItems.length} headlines | ${successCount}/${RSS_FEEDS.length} feeds OK | total seen: ${headlineCount}`,
-);
+      console.log(
+        `[ZeroDrift] +${newItems.length} headlines | ${successCount}/${RSS_FEEDS.length} feeds OK | total seen: ${headlineCount}`,
+      );
     } else {
       const headlineCount = await db.getHeadlineCount();
-console.log(
-  `[ZeroDrift] ✓ Watching ${headlineCount} headlines across ${successCount}/${RSS_FEEDS.length} feeds`,
-);
+      console.log(
+        `[ZeroDrift] ✓ Watching ${headlineCount} headlines across ${successCount}/${RSS_FEEDS.length} feeds`,
+      );
     }
   } catch (e) {
     console.error("[ZeroDrift] RSS poll error:", e.message);
@@ -438,36 +455,52 @@ console.log(
 
 async function broadcastAlert(alert, newsTimestamp, slug, newsLink) {
   if (!bot) return;
-  
+
   const subscribers = await db.getAllSubscribers();
-  const ob = await runRust(['orderbook', '--slug', slug]).catch(() => null);
-  
+  const ob = await runRust(["orderbook", "--slug", slug]).catch(() => null);
+
   for (const chatId of subscribers) {
     const user = await db.getUser(chatId);
     if (new Date(user.subscribed_at).getTime() > newsTimestamp) continue;
     if (isUserOnCooldown(chatId, user)) continue;
     if (isUserRateLimited(user)) continue;
-    
+
     await recordAlertSent(chatId);
 
     const yesPrice = ob?.yes_price;
     const noPrice = ob?.no_price;
-    const betterSide = yesPrice && noPrice ? (yesPrice >= noPrice ? "YES" : "NO") : "YES";
-    const betterPct = betterSide === "YES" ? (yesPrice * 100).toFixed(0) : (noPrice * 100).toFixed(0);
+    const betterSide =
+      yesPrice && noPrice ? (yesPrice >= noPrice ? "YES" : "NO") : "YES";
+    const betterPct =
+      betterSide === "YES"
+        ? (yesPrice * 100).toFixed(0)
+        : (noPrice * 100).toFixed(0);
     const buttonLabel = `⚡ Trade ${betterSide} @ ${betterPct}%`;
 
-    bot.sendMessage(chatId, alert, {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: buttonLabel, web_app: { url: `${FRONTEND_URL}/?slug=${slug}&side=${betterSide}` } },
-            { text: "📊 View on Limitless", url: `https://limitless.exchange/markets/${slug}` },
+    bot
+      .sendMessage(chatId, alert, {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: buttonLabel,
+                web_app: {
+                  url: `${FRONTEND_URL}/?slug=${slug}&side=${betterSide}`,
+                },
+              },
+              {
+                text: "📊 View on Limitless",
+                url: `https://limitless.exchange/markets/${slug}`,
+              },
+            ],
+            ...(newsLink
+              ? [[{ text: "📰 Read Full Story", url: newsLink }]]
+              : []),
           ],
-          ...(newsLink ? [[{ text: "📰 Read Full Story", url: newsLink }]] : []),
-        ],
-      },
-    }).catch(() => {});
+        },
+      })
+      .catch(() => {});
   }
 }
 
@@ -475,16 +508,16 @@ async function broadcastAlert(alert, newsTimestamp, slug, newsLink) {
 
 if (bot) {
   bot.onText(/\/start/, async (msg) => {
-  const chatId = msg.chat.id;
-  try {
-    let user = await db.getUser(chatId);
-    if (!user) {
-      user = await db.createUser(chatId);
-    }
-    
-    bot.sendMessage(
-      chatId,
-      `⚡ *ZeroDrift Online*\n\nAutonomous Limitless alpha catalyst\\.
+    const chatId = msg.chat.id;
+    try {
+      let user = await db.getUser(chatId);
+      if (!user) {
+        user = await db.createUser(chatId);
+      }
+
+      bot.sendMessage(
+        chatId,
+        `⚡ *ZeroDrift Online*\n\nAutonomous Limitless alpha catalyst\\.
 
 I monitor breaking crypto news across 4 sources and instantly surface related prediction markets before the crowd reacts\\.
 
@@ -498,13 +531,13 @@ I monitor breaking crypto news across 4 sources and instantly surface related pr
 /stop \\- Unsubscribe
 
 _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing a trade\\._`,
-      { parse_mode: "MarkdownV2" },
-    );
-  } catch (e) {
-    console.error('[ZeroDrift] Start command error:', e.message);
-    sendSafeError(chatId, 'Initialization');
-  }
-});
+        { parse_mode: "MarkdownV2" },
+      );
+    } catch (e) {
+      console.error("[ZeroDrift] Start command error:", e.message);
+      sendSafeError(chatId, "Initialization");
+    }
+  });
 
   bot.onText(/\/stop/, async (msg) => {
     await db.deleteUser(msg.chat.id);
@@ -515,36 +548,41 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
   });
 
   bot.onText(/\/status/, async (msg) => {
-  const chatId = msg.chat.id;
-  
-  try {
-    let user = await db.getUser(chatId);
-    if (!user) {
-      user = await db.createUser(chatId);
+    const chatId = msg.chat.id;
+
+    try {
+      let user = await db.getUser(chatId);
+      if (!user) {
+        user = await db.createUser(chatId);
+      }
+
+      const onCooldown = isUserOnCooldown(chatId, user);
+      const remaining = cooldownRemaining(user);
+      const headlineCount = await db.getHeadlineCount();
+
+      const lines = [
+        `⚡ *ZeroDrift Status*`,
+        ``,
+        `📡 Subscribed: ✅`,
+        `🔔 Alerts sent this hour: ${user.alerts_this_hour || 0}/${MAX_ALERTS_PER_HOUR}`,
+        `🧊 Cooldown: ${onCooldown ? `Active \\(${remaining} min remaining\\)` : "None"}`,
+        `📰 Headlines watched: ${headlineCount}`,
+        `🎯 Markets tracked: ${latestMarkets.length}`,
+      ];
+
+      bot
+        .sendMessage(chatId, lines.join("\n"), { parse_mode: "MarkdownV2" })
+        .catch(() => {
+          bot.sendMessage(
+            chatId,
+            `Status: ${user.alerts_this_hour || 0}/${MAX_ALERTS_PER_HOUR} alerts | Cooldown: ${onCooldown ? remaining + "min" : "none"}`,
+          );
+        });
+    } catch (e) {
+      console.error("[ZeroDrift] Status command error:", e.message);
+      sendSafeError(chatId, "Status check");
     }
-    
-    const onCooldown = isUserOnCooldown(chatId, user);
-    const remaining = cooldownRemaining(user);
-    const headlineCount = await db.getHeadlineCount();
-    
-    const lines = [
-      `⚡ *ZeroDrift Status*`,
-      ``,
-      `📡 Subscribed: ✅`,
-      `🔔 Alerts sent this hour: ${user.alerts_this_hour || 0}/${MAX_ALERTS_PER_HOUR}`,
-      `🧊 Cooldown: ${onCooldown ? `Active \\(${remaining} min remaining\\)` : "None"}`,
-      `📰 Headlines watched: ${headlineCount}`,
-      `🎯 Markets tracked: ${latestMarkets.length}`,
-    ];
-    
-    bot.sendMessage(chatId, lines.join("\n"), { parse_mode: "MarkdownV2" }).catch(() => {
-      bot.sendMessage(chatId, `Status: ${user.alerts_this_hour || 0}/${MAX_ALERTS_PER_HOUR} alerts | Cooldown: ${onCooldown ? remaining + "min" : "none"}`);
-    });
-  } catch (e) {
-    console.error('[ZeroDrift] Status command error:', e.message);
-    sendSafeError(chatId, 'Status check');
-  }
-});
+  });
 
   bot.onText(/\/markets/, async (msg) => {
     const chatId = msg.chat.id;
@@ -596,7 +634,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
         { parse_mode: "Markdown" },
       );
     } catch (e) {
-      sendSafeError(chatId, 'Funded markets lookup');
+      sendSafeError(chatId, "Funded markets lookup");
     }
   });
 
@@ -618,182 +656,217 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
   });
 
   bot.onText(/\/alphas(?:\s+(\d+))?/, async (msg, match) => {
-  const chatId = msg.chat.id;
-  const pageStr = match[1] || '1';
-  
-  // Rate limit check
-  if (!checkRateLimit(chatId)) {
-    bot.sendMessage(chatId, "⏳ Too many requests. Wait a minute.").catch(() => {});
-    return;
-  }
-  
-  // Validate page number
-  if (!isValidPageNumber(pageStr)) {
-    bot.sendMessage(chatId, "❌ Invalid page. Use: /alphas or /alphas 2").catch(() => {});
-    return;
-  }
-  
-  const page = parseInt(pageStr, 10);
-  const pageSize = 5;
-  
-  try {
-    bot.sendMessage(chatId, `⚡ Scanning alpha (page ${page})...`, { parse_mode: "MarkdownV2" });
+    const chatId = msg.chat.id;
+    const pageStr = match[1] || "1";
 
-    const keywords = ["BTC", "ETH", "SOL", "XRP", "Trump", "ETF", "SEC"];
-    const results = await Promise.allSettled(
-      keywords.map((kw) => runRust(["search", "--keyword", kw])),
-    );
-
-    const seen = new Set();
-    const allMarkets = results
-      .filter((r) => r.status === "fulfilled")
-      .flatMap((r) => r.value.markets || [])
-      .filter((m) => {
-        const t = (m.title || m.slug).toLowerCase();
-        if (seen.has(m.slug)) return false;
-        seen.add(m.slug);
-        return (
-          t.includes("up or down") || t.includes("price") || t.includes("btc") ||
-          t.includes("eth") || t.includes("sol") || t.includes("xrp") ||
-          t.includes("trump") || t.includes("etf") || t.includes("bitcoin") ||
-          t.includes("ethereum") || t.includes("crypto")
-        );
-      });
-
-    if (allMarkets.length === 0) {
-      bot.sendMessage(chatId, "📭 No markets found.", { parse_mode: "MarkdownV2" }).catch(() => {});
+    // Rate limit check
+    const rateLimit = security.checkRateLimit(chatId, "default");
+    if (!rateLimit.allowed) {
+      bot
+        .sendMessage(
+          chatId,
+          `⏳ Too many requests. Wait ${rateLimit.retryAfter}s.`,
+        )
+        .catch(() => {});
       return;
     }
 
-    // Fetch orderbooks for all
-    const withPrices = await Promise.allSettled(
-      allMarkets.map(async (m) => {
-        const ob = await runRust(["orderbook", "--slug", m.slug]);
-        return { ...m, yes_price: ob.yes_price, no_price: ob.no_price, status: ob.status };
-      }),
-    );
-
-    const live = withPrices
-      .filter((r) => r.status === "fulfilled")
-      .map((r) => r.value)
-      .filter((m) => m.yes_price && m.no_price && m.status === "FUNDED")
-      .sort((a, b) => Math.abs(0.5 - a.yes_price) - Math.abs(0.5 - b.yes_price))
-      .slice(0, 100); // Get top 100 for pagination
-
-    if (live.length === 0) {
-      bot.sendMessage(chatId, "📭 No funded markets.", { parse_mode: "MarkdownV2" }).catch(() => {});
+    if (!security.isValidPageNumber(pageStr)) {
+      bot
+        .sendMessage(chatId, "❌ Invalid page. Use: /alphas or /alphas 2")
+        .catch(() => {});
       return;
     }
 
-    // Paginate
-    const totalPages = Math.ceil(live.length / pageSize);
-    if (page > totalPages) {
-      bot.sendMessage(chatId, `❌ Page ${page} doesn't exist. Max: ${totalPages}`).catch(() => {});
-      return;
+    const page = parseInt(pageStr, 10);
+    const pageSize = 5;
+
+    try {
+      const keywords = ["BTC", "ETH", "SOL", "XRP", "Trump", "ETF", "SEC"];
+      const results = await Promise.allSettled(
+        keywords.map((kw) => runRust(["search", "--keyword", kw])),
+      );
+
+      const seen = new Set();
+      const allMarkets = results
+        .filter((r) => r.status === "fulfilled")
+        .flatMap((r) => r.value.markets || [])
+        .filter((m) => {
+          const t = (m.title || m.slug).toLowerCase();
+          if (seen.has(m.slug)) return false;
+          seen.add(m.slug);
+          return (
+            t.includes("up or down") ||
+            t.includes("price") ||
+            t.includes("btc") ||
+            t.includes("eth") ||
+            t.includes("sol") ||
+            t.includes("xrp") ||
+            t.includes("trump") ||
+            t.includes("etf") ||
+            t.includes("bitcoin") ||
+            t.includes("ethereum") ||
+            t.includes("crypto")
+          );
+        });
+
+      if (allMarkets.length === 0) {
+        bot.sendMessage(chatId, "📭 No markets found.").catch(() => {});
+        return;
+      }
+
+      const withPrices = await Promise.allSettled(
+        allMarkets.map(async (m) => {
+          const ob = await runRust(["orderbook", "--slug", m.slug]);
+          return {
+            ...m,
+            yes_price: ob.yes_price,
+            no_price: ob.no_price,
+            status: ob.status,
+          };
+        }),
+      );
+
+      const live = withPrices
+        .filter((r) => r.status === "fulfilled")
+        .map((r) => r.value)
+        .filter((m) => m.yes_price && m.no_price && m.status === "FUNDED")
+        .sort(
+          (a, b) => Math.abs(0.5 - a.yes_price) - Math.abs(0.5 - b.yes_price),
+        )
+        .slice(0, 100);
+
+      if (live.length === 0) {
+        bot.sendMessage(chatId, "📭 No funded markets.").catch(() => {});
+        return;
+      }
+
+      const totalPages = Math.ceil(live.length / pageSize);
+      if (page > totalPages) {
+        bot
+          .sendMessage(
+            chatId,
+            `❌ Page ${page} doesn't exist. Max: ${totalPages}`,
+          )
+          .catch(() => {});
+        return;
+      }
+
+      const start = (page - 1) * pageSize;
+      const pageMarkets = live.slice(start, start + pageSize);
+
+      // Build full message with all markets on page
+      let messageText = `🎯 *Alpha Opportunities* — Page ${page}/${totalPages}\n\n`;
+
+      for (let i = 0; i < pageMarkets.length; i++) {
+        const m = pageMarkets[i];
+        const yesBar = Math.round(m.yes_price * 10);
+        const noBar = 10 - yesBar;
+        const bar = "🟢".repeat(yesBar) + "🔴".repeat(noBar);
+
+        messageText += `${i + 1}\\. *${m.title || m.slug}*\n`;
+        messageText += `${bar}\n`;
+        messageText += `📈 YES: *${(m.yes_price * 100).toFixed(1)}%* \\| 📉 NO: *${(m.no_price * 100).toFixed(1)}%*\n\n`;
+      }
+
+      // Build navigation buttons
+      const navButtons = [];
+      if (page > 1)
+        navButtons.push({
+          text: "⬅️ Previous",
+          callback_data: `alphas_${page - 1}`,
+        });
+      navButtons.push({ text: `${page}/${totalPages}`, callback_data: "noop" });
+      if (page < totalPages)
+        navButtons.push({
+          text: "➡️ Next",
+          callback_data: `alphas_${page + 1}`,
+        });
+
+      const replyMarkup = {
+        inline_keyboard: [
+          navButtons,
+          pageMarkets.map((m, i) => ({
+            text: `Trade #${i + 1}`,
+            web_app: {
+              url: `${FRONTEND_URL}/?slug=${m.slug}&side=${m.yes_price >= m.no_price ? "YES" : "NO"}`,
+            },
+          })),
+        ],
+      };
+
+      bot
+        .sendMessage(chatId, messageText, {
+          parse_mode: "MarkdownV2",
+          reply_markup: replyMarkup,
+        })
+        .catch((err) => {
+          console.error("[ZeroDrift] Alphas message error:", err.message);
+          sendSafeError(chatId, "Alpha scan");
+        });
+    } catch (e) {
+      console.error("[ZeroDrift] Alphas command error:", e.message);
+      sendSafeError(chatId, "Alpha scan");
     }
-
-    const start = (page - 1) * pageSize;
-    const pageMarkets = live.slice(start, start + pageSize);
-
-    // Send header
-    bot.sendMessage(
-      chatId,
-      `🎯 *Alpha Opportunities* — Page ${page}/${totalPages}`,
-      { parse_mode: "Markdown" }
-    ).catch(() => {});
-
-    await new Promise((r) => setTimeout(r, 300));
-
-    // Send each market
-    for (const m of pageMarkets) {
-      const yesBar = Math.round(m.yes_price * 10);
-      const noBar = 10 - yesBar;
-      const bar = "🟢".repeat(yesBar) + "🔴".repeat(noBar);
-
-      const alphaSide = m.yes_price >= m.no_price ? "YES" : "NO";
-      const alphaPct = alphaSide === "YES" 
-        ? (m.yes_price * 100).toFixed(0) 
-        : (m.no_price * 100).toFixed(0);
-
-      const card = `🎯 *${m.title || m.slug}*\n\n${bar}\n📈 YES: *${(m.yes_price * 100).toFixed(1)}%* | 📉 NO: *${(m.no_price * 100).toFixed(1)}%*`;
-
-      await bot.sendMessage(chatId, card, {
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: `⚡ Trade ${alphaSide} @ ${alphaPct}%`, web_app: { url: `${FRONTEND_URL}/?slug=${m.slug}&side=${alphaSide}` } }],
-            [{ text: "📊 View on Limitless", url: `https://limitless.exchange/markets/${m.slug}` }],
-          ],
-        },
-      }).catch(() => {});
-
-      await new Promise((r) => setTimeout(r, 400));
-    }
-
-    // Footer with navigation
-    const navButtons = [];
-    if (page > 1) navButtons.push({ text: "⬅️ Previous", callback_data: `alphas_${page - 1}` });
-    if (page < totalPages) navButtons.push({ text: "➡️ Next", callback_data: `alphas_${page + 1}` });
-
-    if (navButtons.length > 0) {
-      await bot.sendMessage(chatId, `Page ${page}/${totalPages}`, {
-        reply_markup: { inline_keyboard: [navButtons] }
-      }).catch(() => {});
-    }
-  } catch (e) {
-    console.error('[ZeroDrift] Alphas command error:', e.message);
-    sendSafeError(chatId, 'Alpha scan');
-  }
-});
+  });
 
   bot.onText(/\/positions/, async (msg) => {
-  const chatId = msg.chat.id;
-  bot.sendMessage(chatId, "⏳ Fetching your position history...");
+    const chatId = msg.chat.id;
+    bot.sendMessage(chatId, "⏳ Fetching your position history...");
 
-  try {
-    const trades = await db.getTradesByChatId(chatId, 20);
+    try {
+      const trades = await db.getTradesByChatId(chatId, 20);
 
-    if (trades.length === 0) {
-      bot.sendMessage(chatId, "📭 No executed trades yet.\n\nExecute a trade to see your positions here.");
-      return;
-    }
-
-    // Calculate P&L for each trade (simple: amount * (current_price - entry_price))
-    // For now, show basic info
-    let message = `📊 *Your Positions*\n\n`;
-    
-    trades.forEach((trade, i) => {
-      const pnl = (trade.estimated_shares * trade.estimated_price - trade.amount_usdc).toFixed(2);
-      const pnlColor = pnl >= 0 ? "📈" : "📉";
-      
-      message += `${i + 1}. *${trade.market_title || trade.market_slug}*\n`;
-      message += `   Side: ${trade.side}\n`;
-      message += `   Amount: $${parseFloat(trade.amount_usdc).toFixed(2)} USDC\n`;
-      message += `   Shares: ${parseFloat(trade.estimated_shares).toFixed(4)}\n`;
-      message += `   Entry: $${parseFloat(trade.estimated_price).toFixed(4)}\n`;
-      message += `   Status: ${trade.status}\n`;
-      message += `   ${pnlColor} P&L: $${pnl}\n`;
-      message += `   Executed: ${new Date(trade.executed_at).toLocaleString()}\n`;
-      
-      if (trade.tx_hash) {
-        message += `   🔗 TX: \`${trade.tx_hash.slice(0, 10)}...\`\n`;
+      if (trades.length === 0) {
+        bot.sendMessage(
+          chatId,
+          "📭 No executed trades yet.\n\nExecute a trade to see your positions here.",
+        );
+        return;
       }
-      message += `\n`;
-    });
 
-    message += `_Showing last ${trades.length} trades_`;
+      // Calculate P&L for each trade (simple: amount * (current_price - entry_price))
+      // For now, show basic info
+      let message = `📊 *Your Positions*\n\n`;
 
-    bot.sendMessage(chatId, message, { parse_mode: "Markdown" }).catch(() => {
-      // Fallback if markdown fails
-      const simple = trades.map((t, i) => 
-        `${i + 1}. ${t.market_title} | ${t.side} | $${t.amount_usdc} | ${t.status}`
-      ).join('\n');
-      bot.sendMessage(chatId, `Your Positions:\n\n${simple}`);
-    });
-  } catch (e) {
-    sendSafeError(chatId, 'Position history fetch');
-  }
-});
+      trades.forEach((trade, i) => {
+        const pnl = (
+          trade.estimated_shares * trade.estimated_price -
+          trade.amount_usdc
+        ).toFixed(2);
+        const pnlColor = pnl >= 0 ? "📈" : "📉";
+
+        message += `${i + 1}. *${trade.market_title || trade.market_slug}*\n`;
+        message += `   Side: ${trade.side}\n`;
+        message += `   Amount: $${parseFloat(trade.amount_usdc).toFixed(2)} USDC\n`;
+        message += `   Shares: ${parseFloat(trade.estimated_shares).toFixed(4)}\n`;
+        message += `   Entry: $${parseFloat(trade.estimated_price).toFixed(4)}\n`;
+        message += `   Status: ${trade.status}\n`;
+        message += `   ${pnlColor} P&L: $${pnl}\n`;
+        message += `   Executed: ${new Date(trade.executed_at).toLocaleString()}\n`;
+
+        if (trade.tx_hash) {
+          message += `   🔗 TX: \`${trade.tx_hash.slice(0, 10)}...\`\n`;
+        }
+        message += `\n`;
+      });
+
+      message += `_Showing last ${trades.length} trades_`;
+
+      bot.sendMessage(chatId, message, { parse_mode: "Markdown" }).catch(() => {
+        // Fallback if markdown fails
+        const simple = trades
+          .map(
+            (t, i) =>
+              `${i + 1}. ${t.market_title} | ${t.side} | $${t.amount_usdc} | ${t.status}`,
+          )
+          .join("\n");
+        bot.sendMessage(chatId, `Your Positions:\n\n${simple}`);
+      });
+    } catch (e) {
+      sendSafeError(chatId, "Position history fetch");
+    }
+  });
 
   bot.onText(/\/trade (.+)/, async (msg, match) => {
     const chatId = msg.chat.id;
@@ -864,7 +937,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
           bot.sendMessage(chatId, `❌ Failed to send proposal: ${err.message}`);
         });
     } catch (e) {
-      sendSafeError(chatId, 'Trade proposal generation');
+      sendSafeError(chatId, "Trade proposal generation");
     }
   });
 
@@ -873,18 +946,18 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
 
 // Callback Query Handler for Inline Buttons
 
-bot.on('callback_query', async (query) => {
+bot.on("callback_query", async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
-  
+
   try {
     // Acknowledge the button click
     bot.answerCallbackQuery(query.id).catch(() => {});
 
     // Handle alphas pagination
-    if (data.startsWith('alphas_')) {
-      const pageStr = data.split('_')[1];
-      
+    if (data.startsWith("alphas_")) {
+      const pageStr = data.split("_")[1];
+
       if (!security.isValidPageNumber(pageStr)) {
         bot.sendMessage(chatId, "❌ Invalid page.").catch(() => {});
         return;
@@ -907,10 +980,17 @@ bot.on('callback_query', async (query) => {
           if (seen.has(m.slug)) return false;
           seen.add(m.slug);
           return (
-            t.includes("up or down") || t.includes("price") || t.includes("btc") ||
-            t.includes("eth") || t.includes("sol") || t.includes("xrp") ||
-            t.includes("trump") || t.includes("etf") || t.includes("bitcoin") ||
-            t.includes("ethereum") || t.includes("crypto")
+            t.includes("up or down") ||
+            t.includes("price") ||
+            t.includes("btc") ||
+            t.includes("eth") ||
+            t.includes("sol") ||
+            t.includes("xrp") ||
+            t.includes("trump") ||
+            t.includes("etf") ||
+            t.includes("bitcoin") ||
+            t.includes("ethereum") ||
+            t.includes("crypto")
           );
         });
 
@@ -922,7 +1002,12 @@ bot.on('callback_query', async (query) => {
       const withPrices = await Promise.allSettled(
         allMarkets.map(async (m) => {
           const ob = await runRust(["orderbook", "--slug", m.slug]);
-          return { ...m, yes_price: ob.yes_price, no_price: ob.no_price, status: ob.status };
+          return {
+            ...m,
+            yes_price: ob.yes_price,
+            no_price: ob.no_price,
+            status: ob.status,
+          };
         }),
       );
 
@@ -930,7 +1015,9 @@ bot.on('callback_query', async (query) => {
         .filter((r) => r.status === "fulfilled")
         .map((r) => r.value)
         .filter((m) => m.yes_price && m.no_price && m.status === "FUNDED")
-        .sort((a, b) => Math.abs(0.5 - a.yes_price) - Math.abs(0.5 - b.yes_price))
+        .sort(
+          (a, b) => Math.abs(0.5 - a.yes_price) - Math.abs(0.5 - b.yes_price),
+        )
         .slice(0, 100);
 
       if (live.length === 0) {
@@ -940,7 +1027,12 @@ bot.on('callback_query', async (query) => {
 
       const totalPages = Math.ceil(live.length / pageSize);
       if (page > totalPages) {
-        bot.sendMessage(chatId, `❌ Page ${page} doesn't exist. Max: ${totalPages}`).catch(() => {});
+        bot
+          .sendMessage(
+            chatId,
+            `❌ Page ${page} doesn't exist. Max: ${totalPages}`,
+          )
+          .catch(() => {});
         return;
       }
 
@@ -948,11 +1040,13 @@ bot.on('callback_query', async (query) => {
       const pageMarkets = live.slice(start, start + pageSize);
 
       // Send header
-      bot.sendMessage(
-        chatId,
-        `🎯 *Alpha Opportunities* — Page ${page}/${totalPages}`,
-        { parse_mode: "Markdown" }
-      ).catch(() => {});
+      bot
+        .sendMessage(
+          chatId,
+          `🎯 *Alpha Opportunities* — Page ${page}/${totalPages}`,
+          { parse_mode: "Markdown" },
+        )
+        .catch(() => {});
 
       await new Promise((r) => setTimeout(r, 300));
 
@@ -963,39 +1057,69 @@ bot.on('callback_query', async (query) => {
         const bar = "🟢".repeat(yesBar) + "🔴".repeat(noBar);
 
         const alphaSide = m.yes_price >= m.no_price ? "YES" : "NO";
-        const alphaPct = alphaSide === "YES" 
-          ? (m.yes_price * 100).toFixed(0) 
-          : (m.no_price * 100).toFixed(0);
+        const alphaPct =
+          alphaSide === "YES"
+            ? (m.yes_price * 100).toFixed(0)
+            : (m.no_price * 100).toFixed(0);
 
-        const card = `🎯 *${m.title || m.slug}*\n\n${bar}\n📈 YES: *${(m.yes_price * 100).toFixed(1)}%* | 📉 NO: *${(m.no_price * 100).toFixed(1)}%*`;
+        const card = `🎯 *${m.title || m.slug}*\n\n${bar}\n📈 YES: *${(m.yes_price * 100).toFixed(1)}%* \\| 📉 NO: *${(m.no_price * 100).toFixed(1)}%*`;
 
-        await bot.sendMessage(chatId, card, {
-          parse_mode: "Markdown",
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: `⚡ Trade ${alphaSide} @ ${alphaPct}%`, web_app: { url: `${FRONTEND_URL}/?slug=${m.slug}&side=${alphaSide}` } }],
-              [{ text: "📊 View on Limitless", url: `https://limitless.exchange/markets/${m.slug}` }],
-            ],
-          },
-        }).catch(() => {});
+        await bot
+          .sendMessage(chatId, card, {
+            parse_mode: "Markdown",
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  {
+                    text: `⚡ Trade ${alphaSide} @ ${alphaPct}%`,
+                    web_app: {
+                      url: `${FRONTEND_URL}/?slug=${m.slug}&side=${alphaSide}`,
+                    },
+                  },
+                ],
+                [
+                  {
+                    text: "📊 View on Limitless",
+                    url: `https://limitless.exchange/markets/${m.slug}`,
+                  },
+                ],
+              ],
+            },
+          })
+          .catch(() => {});
 
         await new Promise((r) => setTimeout(r, 400));
       }
 
       // Footer with navigation
       const navButtons = [];
-      if (page > 1) navButtons.push({ text: "⬅️ Previous", callback_data: `alphas_${page - 1}` });
-      if (page < totalPages) navButtons.push({ text: "➡️ Next", callback_data: `alphas_${page + 1}` });
+      if (page > 1)
+        navButtons.push({
+          text: "⬅️ Previous",
+          callback_data: `alphas_${page - 1}`,
+        });
+      if (page < totalPages)
+        navButtons.push({
+          text: "➡️ Next",
+          callback_data: `alphas_${page + 1}`,
+        });
 
       if (navButtons.length > 0) {
-        await bot.sendMessage(chatId, `Page ${page}/${totalPages}`, {
-          reply_markup: { inline_keyboard: [navButtons] }
-        }).catch(() => {});
+        await bot
+          .sendMessage(chatId, `Page ${page}/${totalPages}`, {
+            reply_markup: { inline_keyboard: [navButtons] },
+          })
+          .catch(() => {});
       }
     }
   } catch (err) {
-    console.error('[ZeroDrift] Callback query error:', err.message);
-    bot.answerCallbackQuery(query.id, { text: '❌ Error processing request', show_alert: true }).catch(() => {});
+    console.error("[ZeroDrift] Callback query error:", err.message);
+    bot
+      .answerCallbackQuery(query.id, {
+        text: "❌ Error processing request",
+        show_alert: true,
+      })
+      .catch(() => {});
   }
 });
 
@@ -1005,300 +1129,348 @@ app.get("/api/news", (req, res) => {
   res.json({ success: true, news: latestNews });
 });
 
-app.get("/api/markets/search", security.rateLimitMiddleware('api'), async (req, res) => {
-  const { keyword } = req.query;
-  if (!keyword) return res.status(400).json({ error: "keyword required" });
-  try {
-    const sanitized = security.sanitizeInput(keyword);
-    const result = await runRust(["search", "--keyword", sanitized]);
-    res.json(result);
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
+app.get(
+  "/api/markets/search",
+  security.rateLimitMiddleware("api"),
+  async (req, res) => {
+    const { keyword } = req.query;
+    if (!keyword) return res.status(400).json({ error: "keyword required" });
+    try {
+      const sanitized = security.sanitizeInput(keyword);
+      const result = await runRust(["search", "--keyword", sanitized]);
+      res.json(result);
+    } catch (e) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  },
+);
 
-app.get("/api/markets/orderbook", security.rateLimitMiddleware('api'), async (req, res) => {
-  const { slug } = req.query;
-  if (!slug) return res.status(400).json({ error: "slug required" });
-  if (!security.isValidSlug(slug)) {
-    return res.status(400).json({ error: "Invalid market slug" });
-  }
+app.get(
+  "/api/markets/orderbook",
+  security.rateLimitMiddleware("api"),
+  async (req, res) => {
+    const { slug } = req.query;
+    if (!slug) return res.status(400).json({ error: "slug required" });
+    if (!security.isValidSlug(slug)) {
+      return res.status(400).json({ error: "Invalid market slug" });
+    }
 
-  try {
-    const result = await runRust(["orderbook", "--slug", slug]);
-    res.json(result);
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
+    try {
+      const result = await runRust(["orderbook", "--slug", slug]);
+      res.json(result);
+    } catch (e) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  },
+);
 
-app.post("/api/trade/propose", security.rateLimitMiddleware('api'), async (req, res) => {
-  const { slug, side, amount } = req.body;
+app.post(
+  "/api/trade/propose",
+  security.rateLimitMiddleware("api"),
+  async (req, res) => {
+    const { slug, side, amount } = req.body;
 
-   if (!slug || !security.isValidSlug(slug)) {
-    return res.status(400).json({ error: "Invalid market slug" });
-  }
-  if (!security.isValidSide(side)) {
-    return res.status(400).json({ error: "Side must be YES or NO" });
-  }
-  if (!security.isValidAmount(amount)) {
-    return res.status(400).json({ error: "Invalid amount (max $10,000)" });
-  }
+    if (!slug || !security.isValidSlug(slug)) {
+      return res.status(400).json({ error: "Invalid market slug" });
+    }
+    if (!security.isValidSide(side)) {
+      return res.status(400).json({ error: "Side must be YES or NO" });
+    }
+    if (!security.isValidAmount(amount)) {
+      return res.status(400).json({ error: "Invalid amount (max $10,000)" });
+    }
 
-  try {
-    const result = await runRust([
-      "trade",
-      "--slug",
-      slug,
-      "--side",
-      side.toString(),
-      "--amount",
-      amount.toString(),
-    ]);
-    res.json(result);
-  } catch (e) {
-    res.status(500).json({ success: false, error: "Trade Proposal failed", details: e.message });
-  }
-});
+    try {
+      const result = await runRust([
+        "trade",
+        "--slug",
+        slug,
+        "--side",
+        side.toString(),
+        "--amount",
+        amount.toString(),
+      ]);
+      res.json(result);
+    } catch (e) {
+      res
+        .status(500)
+        .json({
+          success: false,
+          error: "Trade Proposal failed",
+          details: e.message,
+        });
+    }
+  },
+);
 
 // Called from frontend after wallet execution
-app.post("/api/trade/executed", security.rateLimitMiddleware('trade'),  async (req, res) => {
+app.post(
+  "/api/trade/executed",
+  security.rateLimitMiddleware("trade"),
+  async (req, res) => {
+    const {
+      chatId,
+      walletAddress,
+      marketSlug,
+      marketTitle,
+      side,
+      amount,
+      estimatedPrice,
+      estimatedShares,
+      txHash,
+    } = req.body;
 
-  const { chatId, walletAddress, marketSlug, marketTitle, side, amount, estimatedPrice, estimatedShares, txHash } = req.body;
-  
-  if (!chatId || !security.isValidChatId(chatId)) {
-    return res.status(400).json({ error: "Invalid chatId" });
-  }
-  if (walletAddress && !security.isValidWalletAddress(walletAddress)) {
-    return res.status(400).json({ error: "Invalid wallet address" });
-  }
-  if (marketSlug && !security.isValidSlug(marketSlug)) {
-    return res.status(400).json({ error: "Invalid market slug" });
-  }
-  if (side && !security.isValidSide(side)) {
-    return res.status(400).json({ error: "Invalid side" });
-  }
-  if (amount && !security.isValidAmount(amount)) {
-    return res.status(400).json({ error: "Invalid amount" });
-  }
-  
-  const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
-  
-  try {
-    await recordTradeExecuted(numericChatId);
-    
-    if (walletAddress && marketSlug && amount) {
-      await db.recordTrade(
-        numericChatId,
-        walletAddress,
-        marketSlug,
-        marketTitle || '',
-        security.sanitizeInput(marketTitle || ''),
-        side || 'YES',
-        parseFloat(amount),
-        parseFloat(estimatedPrice) || 0,
-        parseFloat(estimatedShares) || 0,
-        txHash || null
-      );
-      console.log(`[ZeroDrift] Trade recorded for ${numericChatId}: ${marketSlug} ${side} $${amount}`);
+    if (!chatId || !security.isValidChatId(chatId)) {
+      return res.status(400).json({ error: "Invalid chatId" });
     }
-    
-    const user = await db.getUser(numericChatId);
-    const remaining = cooldownRemaining(user);
-    console.log(`[ZeroDrift] Trade executed for ${numericChatId} — cooldown ${remaining}min`);
-    
-    if (bot) {
-      bot.sendMessage(
-        numericChatId,
-        `✅ *Trade Executed*\n\nZeroDrift is now in cooldown mode for 2 hours\\.\n\nYour alerts are paused — go touch grass 🌿`,
-        { parse_mode: "MarkdownV2" },
-      ).catch(() => {});
+    if (walletAddress && !security.isValidWalletAddress(walletAddress)) {
+      return res.status(400).json({ error: "Invalid wallet address" });
     }
-  } catch (err) {
-    console.error('[ZeroDrift] Trade execution error:', err.message);
-    return res.status(500).json({ success: false, error: err.message });
-  }
-  
-  res.json({ success: true });
-});
-  
-  app.post("/api/test-alpha", async (req, res) => {
+    if (marketSlug && !security.isValidSlug(marketSlug)) {
+      return res.status(400).json({ error: "Invalid market slug" });
+    }
+    if (side && !security.isValidSide(side)) {
+      return res.status(400).json({ error: "Invalid side" });
+    }
+    if (amount && !security.isValidAmount(amount)) {
+      return res.status(400).json({ error: "Invalid amount" });
+    }
+
+    const numericChatId =
+      typeof chatId === "string" ? parseInt(chatId, 10) : chatId;
+
     try {
-      // Fetch real latest headline from CoinTelegraph
-      let realHeadline = null;
-      let realLink = null;
-  
-      // Always prefer explicitly provided headline
-      if (req.body.headline) {
-        realHeadline = req.body.headline;
-      } else if (latestNews.length > 0) {
-        const recent = latestNews[0];
-        realHeadline = recent.title;
-        realLink = recent.link;
-      } else {
-        // Fallback: fetch fresh from RSS right now
-        try {
-          const feed = await withTimeout(
-            rssParser.parseURL("https://cointelegraph.com/rss"),
-            RSS_TIMEOUT_MS,
-          );
-          if (feed.items.length > 0) {
-            realHeadline = feed.items[0].title;
-            realLink = feed.items[0].link;
-          }
-        } catch {}
-      }
-  
-      // Final fallback
-      if (!realHeadline) {
-        realHeadline =
-          req.body.headline ||
-          "Bitcoin breaks $100K as ETF inflows surge to record highs";
-      }
-  
-      console.log(`[ZeroDrift] Test alpha using: "${realHeadline}"`);
-  
-      const keyword = extractKeyword(realHeadline);
-      console.log(`[ZeroDrift] Extracted keyword: ${keyword}`);
-  
-      const markets = await runRust(["search", "--keyword", keyword]);
-  
-      // Filter to crypto only funded markets
-      const cryptoMarkets = (markets.markets || []).filter((m) => {
-        const t = (m.title || m.slug).toLowerCase();
-        return (
-          t.includes("up or down") ||
-          t.includes("price") ||
-          t.includes("btc") ||
-          t.includes("eth") ||
-          t.includes("sol") ||
-          t.includes("bitcoin") ||
-          t.includes("ethereum") ||
-          t.includes("crypto") ||
-          t.includes("xrp") ||
-          t.includes("ton")
+      await recordTradeExecuted(numericChatId);
+
+      if (walletAddress && marketSlug && amount) {
+        await db.recordTrade(
+          numericChatId,
+          walletAddress,
+          marketSlug,
+          marketTitle || "",
+          security.sanitizeInput(marketTitle || ""),
+          side || "YES",
+          parseFloat(amount),
+          parseFloat(estimatedPrice) || 0,
+          parseFloat(estimatedShares) || 0,
+          txHash || null,
         );
-      });
-  
-      if (cryptoMarkets.length === 0) {
-        // Fallback to BTC daily if no match
-        const fallback = await runRust(["search", "--keyword", "BTC"]);
-        const btcMarket = (fallback.markets || [])[0];
-        if (!btcMarket) {
-          return res.json({
-            success: false,
-            message: "No markets found",
-            headline: realHeadline,
-          });
-        }
-        cryptoMarkets.push(btcMarket);
+        console.log(
+          `[ZeroDrift] Trade recorded for ${numericChatId}: ${marketSlug} ${side} $${amount}`,
+        );
       }
-  
-      // Find first FUNDED market with live pricing
-      let topMarket = null;
-      let ob = null;
-  
-      for (const m of cryptoMarkets) {
-        const orderbook = await runRust(['orderbook', '--slug', m.slug]).catch(() => null);
-        if (orderbook && orderbook.status === 'FUNDED' && orderbook.yes_price) {
+
+      const user = await db.getUser(numericChatId);
+      const remaining = cooldownRemaining(user);
+      console.log(
+        `[ZeroDrift] Trade executed for ${numericChatId} — cooldown ${remaining}min`,
+      );
+
+      if (bot) {
+        bot
+          .sendMessage(
+            numericChatId,
+            `✅ *Trade Executed*\n\nZeroDrift is now in cooldown mode for 2 hours\\.\n\nYour alerts are paused — go touch grass 🌿`,
+            { parse_mode: "MarkdownV2" },
+          )
+          .catch(() => {});
+      }
+    } catch (err) {
+      console.error("[ZeroDrift] Trade execution error:", err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+
+    res.json({ success: true });
+  },
+);
+
+app.post("/api/test-alpha", async (req, res) => {
+  try {
+    // Fetch real latest headline from CoinTelegraph
+    let realHeadline = null;
+    let realLink = null;
+
+    // Always prefer explicitly provided headline
+    if (req.body.headline) {
+      realHeadline = req.body.headline;
+    } else if (latestNews.length > 0) {
+      const recent = latestNews[0];
+      realHeadline = recent.title;
+      realLink = recent.link;
+    } else {
+      // Fallback: fetch fresh from RSS right now
+      try {
+        const feed = await withTimeout(
+          rssParser.parseURL("https://cointelegraph.com/rss"),
+          RSS_TIMEOUT_MS,
+        );
+        if (feed.items.length > 0) {
+          realHeadline = feed.items[0].title;
+          realLink = feed.items[0].link;
+        }
+      } catch {}
+    }
+
+    // Final fallback
+    if (!realHeadline) {
+      realHeadline =
+        req.body.headline ||
+        "Bitcoin breaks $100K as ETF inflows surge to record highs";
+    }
+
+    console.log(`[ZeroDrift] Test alpha using: "${realHeadline}"`);
+
+    const keyword = extractKeyword(realHeadline);
+    console.log(`[ZeroDrift] Extracted keyword: ${keyword}`);
+
+    const markets = await runRust(["search", "--keyword", keyword]);
+
+    // Filter to crypto only funded markets
+    const cryptoMarkets = (markets.markets || []).filter((m) => {
+      const t = (m.title || m.slug).toLowerCase();
+      return (
+        t.includes("up or down") ||
+        t.includes("price") ||
+        t.includes("btc") ||
+        t.includes("eth") ||
+        t.includes("sol") ||
+        t.includes("bitcoin") ||
+        t.includes("ethereum") ||
+        t.includes("crypto") ||
+        t.includes("xrp") ||
+        t.includes("ton")
+      );
+    });
+
+    if (cryptoMarkets.length === 0) {
+      // Fallback to BTC daily if no match
+      const fallback = await runRust(["search", "--keyword", "BTC"]);
+      const btcMarket = (fallback.markets || [])[0];
+      if (!btcMarket) {
+        return res.json({
+          success: false,
+          message: "No markets found",
+          headline: realHeadline,
+        });
+      }
+      cryptoMarkets.push(btcMarket);
+    }
+
+    // Find first FUNDED market with live pricing
+    let topMarket = null;
+    let ob = null;
+
+    for (const m of cryptoMarkets) {
+      const orderbook = await runRust(["orderbook", "--slug", m.slug]).catch(
+        () => null,
+      );
+      if (orderbook && orderbook.status === "FUNDED" && orderbook.yes_price) {
+        topMarket = m;
+        ob = orderbook;
+        break;
+      }
+    }
+
+    // If none funded in keyword results, search BTC directly
+    if (!topMarket) {
+      const btcResults = await runRust(["search", "--keyword", "BTC"]);
+      for (const m of btcResults.markets || []) {
+        const orderbook = await runRust(["orderbook", "--slug", m.slug]).catch(
+          () => null,
+        );
+        if (orderbook && orderbook.status === "FUNDED" && orderbook.yes_price) {
           topMarket = m;
           ob = orderbook;
           break;
         }
       }
-  
-      // If none funded in keyword results, search BTC directly
-      if (!topMarket) {
-        const btcResults = await runRust(['search', '--keyword', 'BTC']);
-        for (const m of (btcResults.markets || [])) {
-          const orderbook = await runRust(['orderbook', '--slug', m.slug]).catch(() => null);
-          if (orderbook && orderbook.status === 'FUNDED' && orderbook.yes_price) {
-            topMarket = m;
-            ob = orderbook;
-            break;
-          }
-        }
-      }
-  
-      if (!topMarket) {
-        return res.json({ success: false, message: 'No funded markets found right now', headline: realHeadline });
-      }
-  
-      const yesPrice = ob?.yes_price;
-      const noPrice = ob?.no_price;
-      const betterSide =
-        yesPrice && noPrice ? (yesPrice >= noPrice ? "YES" : "NO") : "YES";
-      const betterPct =
-        betterSide === "YES"
-          ? (yesPrice * 100).toFixed(0)
-          : (noPrice * 100).toFixed(0);
-  
-      const alert = `🚨 *Breaking Alpha*\n\n📰 ${escapeMarkdown(realHeadline)}${realLink ? "\n🔗 " + realLink : ""}\n\n🎯 *Related Market:* ${escapeMarkdown(topMarket.title || topMarket.slug)}\n📊 *Odds:* YES ${yesPrice ? (yesPrice * 100).toFixed(1) + "%" : "N/A"} | NO ${noPrice ? (noPrice * 100).toFixed(1) + "%" : "N/A"}\n\n_ZeroDrift detected this opportunity automatically_`;
-  
-      // Broadcast to all subscribed users
-      userState.forEach((state, chatId) => {
-        bot
-          .sendMessage(chatId, alert, {
-            parse_mode: "Markdown",
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  {
-                    text: `⚡ Trade ${betterSide} @ ${betterPct}%`,
-                    web_app: {
-                      url: `${FRONTEND_URL}/?slug=${topMarket.slug}&side=${betterSide}`,
-                    },
-                  },
-                  {
-                    text: "📊 View on Limitless",
-                    url: `https://limitless.exchange/markets/${topMarket.slug}`,
-                  },
-                ],
-                ...(realLink
-                  ? [[{ text: "📰 Read Full Story", url: realLink }]]
-                  : []),
-              ],
-            },
-          })
-          .catch(() => {});
-      });
-  
-      res.json({
-        success: true,
-        headline: realHeadline,
-        keyword,
-        market: topMarket.slug,
-        marketTitle: topMarket.title,
-        odds: { yes: yesPrice, no: noPrice },
-        side: betterSide,
-        subscribers: userState.size,
-      });
-    } catch (e) {
-      res.status(500).json({ error: e.message });
     }
-  });
 
-  app.get("/api/status", async (req, res) => {
+    if (!topMarket) {
+      return res.json({
+        success: false,
+        message: "No funded markets found right now",
+        headline: realHeadline,
+      });
+    }
+
+    const yesPrice = ob?.yes_price;
+    const noPrice = ob?.no_price;
+    const betterSide =
+      yesPrice && noPrice ? (yesPrice >= noPrice ? "YES" : "NO") : "YES";
+    const betterPct =
+      betterSide === "YES"
+        ? (yesPrice * 100).toFixed(0)
+        : (noPrice * 100).toFixed(0);
+
+    const alert = `🚨 *Breaking Alpha*\n\n📰 ${escapeMarkdown(realHeadline)}${realLink ? "\n🔗 " + realLink : ""}\n\n🎯 *Related Market:* ${escapeMarkdown(topMarket.title || topMarket.slug)}\n📊 *Odds:* YES ${yesPrice ? (yesPrice * 100).toFixed(1) + "%" : "N/A"} | NO ${noPrice ? (noPrice * 100).toFixed(1) + "%" : "N/A"}\n\n_ZeroDrift detected this opportunity automatically_`;
+
+    // Broadcast to all subscribed users
+    userState.forEach((state, chatId) => {
+      bot
+        .sendMessage(chatId, alert, {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: `⚡ Trade ${betterSide} @ ${betterPct}%`,
+                  web_app: {
+                    url: `${FRONTEND_URL}/?slug=${topMarket.slug}&side=${betterSide}`,
+                  },
+                },
+                {
+                  text: "📊 View on Limitless",
+                  url: `https://limitless.exchange/markets/${topMarket.slug}`,
+                },
+              ],
+              ...(realLink
+                ? [[{ text: "📰 Read Full Story", url: realLink }]]
+                : []),
+            ],
+          },
+        })
+        .catch(() => {});
+    });
+
+    res.json({
+      success: true,
+      headline: realHeadline,
+      keyword,
+      market: topMarket.slug,
+      marketTitle: topMarket.title,
+      odds: { yes: yesPrice, no: noPrice },
+      side: betterSide,
+      subscribers: userState.size,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/status", async (req, res) => {
   const uptime = Math.floor((Date.now() - serverStartTime) / 1000);
   try {
     const headlineCount = await db.getHeadlineCount();
 
-  res.json({
-    success: true,
-    status: "online",
-    uptime: `${Math.floor(uptime / 60)}m ${uptime % 60}s`,
-    newsCount: latestNews.length,
-    marketsCount: latestMarkets.length,
-    headlinesSeen: headlineCount,
-    feedCount: RSS_FEEDS.length,
-    telegramActive: !!bot,
-    totalAlertsDispatched,
-    totalTradesProposed,
-  });
-} catch (error) {
-  console.error("[ZeroDrift] Status API error:", error);
-  res.status(500).json({ success: false, error: "Failed to retrieve status" });
-}
+    res.json({
+      success: true,
+      status: "online",
+      uptime: `${Math.floor(uptime / 60)}m ${uptime % 60}s`,
+      newsCount: latestNews.length,
+      marketsCount: latestMarkets.length,
+      headlinesSeen: headlineCount,
+      feedCount: RSS_FEEDS.length,
+      telegramActive: !!bot,
+      totalAlertsDispatched,
+      totalTradesProposed,
+    });
+  } catch (error) {
+    console.error("[ZeroDrift] Status API error:", error);
+    res
+      .status(500)
+      .json({ success: false, error: "Failed to retrieve status" });
+  }
 });
 
 app.get("/api/health", async (req, res) => {
@@ -1308,7 +1480,7 @@ app.get("/api/health", async (req, res) => {
 
   try {
     const headlineCount = await db.getHeadlineCount();
-    
+
     res.json({
       status: "healthy",
       timestamp: new Date().toISOString(),
@@ -1317,13 +1489,13 @@ app.get("/api/health", async (req, res) => {
       memory: {
         used_mb: rssMemory,
         total_mb: maxMemory,
-        percent: Math.round((rssMemory / maxMemory) * 100)
+        percent: Math.round((rssMemory / maxMemory) * 100),
       },
       services: {
         telegram_bot: !!bot,
         rss_feeds: RSS_FEEDS.length,
         seen_headlines: headlineCount,
-      }
+      },
     });
   } catch (error) {
     console.error("[ZeroDrift] Health check error:", error);
@@ -1361,14 +1533,14 @@ async function shutdown() {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, async() => {
+app.listen(PORT, async () => {
   console.log(`[ZeroDrift] Engine running on port ${PORT}`);
 
   try {
     await db.initializeDatabase();
-    console.log('[ZeroDrift] Database connected and initialized');
+    console.log("[ZeroDrift] Database connected and initialized");
   } catch (err) {
-    console.error('[ZeroDrift] Failed to initialize database:', err);
+    console.error("[ZeroDrift] Failed to initialize database:", err);
     process.exit(1);
   }
 
