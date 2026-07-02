@@ -755,8 +755,13 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
       const start = (page - 1) * pageSize;
       const pageMarkets = live.slice(start, start + pageSize);
 
+      // Helper to escape MarkdownV2 special characters
+      function escapeMarkdownV2(text) {
+        return String(text).replace(/[_*[\]()~`>#+\-=|{}.!]/g, "\\$&");
+      }
+
       // Build full message with all markets on page
-      let messageText = `🎯 *Alpha Opportunities* — Page ${page}/${totalPages}\n\n`;
+      let messageText = `🎯 *Alpha Opportunities* \\- Page ${page}/${totalPages}\n\n`;
 
       for (let i = 0; i < pageMarkets.length; i++) {
         const m = pageMarkets[i];
@@ -764,7 +769,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
         const noBar = 10 - yesBar;
         const bar = "🟢".repeat(yesBar) + "🔴".repeat(noBar);
 
-        messageText += `${i + 1}\\. *${m.title || m.slug}*\n`;
+        messageText += `${i + 1}\\. *${escapeMarkdownV2(m.title || m.slug)}*\n`;
         messageText += `${bar}\n`;
         messageText += `📈 YES: *${(m.yes_price * 100).toFixed(1)}%* \\| 📉 NO: *${(m.no_price * 100).toFixed(1)}%*\n\n`;
       }
@@ -1112,6 +1117,23 @@ bot.on("callback_query", async (query) => {
           .catch(() => {});
       }
     }
+    function escapeMarkdownV2(text) {
+      return String(text).replace(/[_*[\]()~`>#+\-=|{}.!]/g, "\\$&");
+    }
+
+    // Build message
+    let messageText = `🎯 *Alpha Opportunities* \\- Page ${page}/${totalPages}\n\n`;
+
+    for (let i = 0; i < pageMarkets.length; i++) {
+      const m = pageMarkets[i];
+      const yesBar = Math.round(m.yes_price * 10);
+      const noBar = 10 - yesBar;
+      const bar = "🟢".repeat(yesBar) + "🔴".repeat(noBar);
+
+      messageText += `${i + 1}\\. *${escapeMarkdownV2(m.title || m.slug)}*\n`;
+      messageText += `${bar}\n`;
+      messageText += `📈 YES: *${(m.yes_price * 100).toFixed(1)}%* \\| 📉 NO: *${(m.no_price * 100).toFixed(1)}%*\n\n`;
+    }
   } catch (err) {
     console.error("[ZeroDrift] Callback query error:", err.message);
     bot
@@ -1192,13 +1214,11 @@ app.post(
       ]);
       res.json(result);
     } catch (e) {
-      res
-        .status(500)
-        .json({
-          success: false,
-          error: "Trade Proposal failed",
-          details: e.message,
-        });
+      res.status(500).json({
+        success: false,
+        error: "Trade Proposal failed",
+        details: e.message,
+      });
     }
   },
 );
