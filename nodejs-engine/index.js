@@ -202,16 +202,6 @@ async function getUser(chatId) {
   const numericChatId =
     typeof chatId === "string" ? parseInt(chatId, 10) : chatId;
 
-  // Debug log
-  if (typeof numericChatId !== "number") {
-    console.error(
-      "[ZeroDrift] getUser received non-number:",
-      typeof numericChatId,
-      JSON.stringify(chatId).slice(0, 100),
-    );
-    throw new Error(`Invalid chatId type: ${typeof numericChatId}`);
-  }
-
   const result = await pool.query("SELECT * FROM users WHERE chat_id = $1", [
     numericChatId,
   ]);
@@ -588,7 +578,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
         ``,
         `📡 Subscribed: ✅`,
         `🔔 Alerts sent this hour: ${user.alerts_this_hour || 0}/${MAX_ALERTS_PER_HOUR}`,
-        `🧊 Cooldown: ${onCooldown ? `Active \\(${remaining} min remaining\\)` : "None"}`,
+        `🧊 Cooldown: ${isUserOnCooldown(chatId, user) ? `Active \\(${remaining} min remaining\\)` : "None"}`,
         `📰 Headlines watched: ${headlineCount}`,
         `🎯 Markets tracked: ${latestMarkets.length}`,
       ];
@@ -598,7 +588,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
         .catch(() => {
           bot.sendMessage(
             chatId,
-            `Status: ${user.alerts_this_hour || 0}/${MAX_ALERTS_PER_HOUR} alerts | Cooldown: ${onCooldown ? remaining + "min" : "none"}`,
+            `Status: ${user.alerts_this_hour || 0}/${MAX_ALERTS_PER_HOUR} alerts | Cooldown: ${isUserOnCooldown(chatId, user) ? remaining + "min" : "none"}`,
           );
         });
     } catch (e) {
