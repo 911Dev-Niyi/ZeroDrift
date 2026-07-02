@@ -1044,95 +1044,65 @@ bot.on("callback_query", async (query) => {
       const start = (page - 1) * pageSize;
       const pageMarkets = live.slice(start, start + pageSize);
 
-      // Send header
-      bot
-        .sendMessage(
-          chatId,
-          `🎯 *Alpha Opportunities* — Page ${page}/${totalPages}`,
-          { parse_mode: "Markdown" },
-        )
-        .catch(() => {});
+      // Helper to escape MarkdownV2 special characters
+      function escapeMarkdownV2(text) {
+        return String(text).replace(/[_*[\]()~`>#+\-=|{}.!]/g, "\\$&");
+      }
 
-      await new Promise((r) => setTimeout(r, 300));
+      // Build full message with all markets on page
+      let messageText = `🎯 *Alpha Opportunities* \\- Page ${page}/${totalPages}\n\n`;
 
-      // Send each market
-      for (const m of pageMarkets) {
+      for (let i = 0; i < pageMarkets.length; i++) {
+        const m = pageMarkets[i];
         const yesBar = Math.round(m.yes_price * 10);
         const noBar = 10 - yesBar;
         const bar = "🟢".repeat(yesBar) + "🔴".repeat(noBar);
 
-        const alphaSide = m.yes_price >= m.no_price ? "YES" : "NO";
-        const alphaPct =
-          alphaSide === "YES"
-            ? (m.yes_price * 100).toFixed(0)
-            : (m.no_price * 100).toFixed(0);
-
-        const card = `🎯 *${m.title || m.slug}*\n\n${bar}\n📈 YES: *${(m.yes_price * 100).toFixed(1)}%* \\| 📉 NO: *${(m.no_price * 100).toFixed(1)}%*`;
-
-        await bot
-          .sendMessage(chatId, card, {
-            parse_mode: "Markdown",
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  {
-                    text: `⚡ Trade ${alphaSide} @ ${alphaPct}%`,
-                    web_app: {
-                      url: `${FRONTEND_URL}/?slug=${m.slug}&side=${alphaSide}`,
-                    },
-                  },
-                ],
-                [
-                  {
-                    text: "📊 View on Limitless",
-                    url: `https://limitless.exchange/markets/${m.slug}`,
-                  },
-                ],
-              ],
-            },
-          })
-          .catch(() => {});
-
-        await new Promise((r) => setTimeout(r, 400));
+        messageText += `${i + 1}\\. *${escapeMarkdownV2(m.title || m.slug)}*\n`;
+        messageText += `${bar}\n`;
+        messageText += `📈 YES: *${(m.yes_price * 100).toFixed(1)}%* \\| 📉 NO: *${(m.no_price * 100).toFixed(1)}%*\n\n`;
       }
 
-      // Footer with navigation
+      // Build navigation buttons
       const navButtons = [];
       if (page > 1)
         navButtons.push({
           text: "⬅️ Previous",
           callback_data: `alphas_${page - 1}`,
         });
+      navButtons.push({ text: `${page}/${totalPages}`, callback_data: "noop" });
       if (page < totalPages)
         navButtons.push({
           text: "➡️ Next",
           callback_data: `alphas_${page + 1}`,
         });
 
-      if (navButtons.length > 0) {
-        await bot
-          .sendMessage(chatId, `Page ${page}/${totalPages}`, {
-            reply_markup: { inline_keyboard: [navButtons] },
-          })
-          .catch(() => {});
-      }
-    }
-    function escapeMarkdownV2(text) {
-      return String(text).replace(/[_*[\]()~`>#+\-=|{}.!]/g, "\\$&");
-    }
+      const replyMarkup = {
+        inline_keyboard: [
+          navButtons,
+          pageMarkets.map((m, i) => ({
+            text: `Trade #${i + 1}`,
+            web_app: {
+              url: `${FRONTEND_URL}/?slug=${m.slug}&side=${m.yes_price >= m.no_price ? "YES" : "NO"}`,
+            },
+          })),
+        ],
+      };
 
-    // Build message
-    let messageText = `🎯 *Alpha Opportunities* \\- Page ${page}/${totalPages}\n\n`;
-
-    for (let i = 0; i < pageMarkets.length; i++) {
-      const m = pageMarkets[i];
-      const yesBar = Math.round(m.yes_price * 10);
-      const noBar = 10 - yesBar;
-      const bar = "🟢".repeat(yesBar) + "🔴".repeat(noBar);
-
-      messageText += `${i + 1}\\. *${escapeMarkdownV2(m.title || m.slug)}*\n`;
-      messageText += `${bar}\n`;
-      messageText += `📈 YES: *${(m.yes_price * 100).toFixed(1)}%* \\| 📉 NO: *${(m.no_price * 100).toFixed(1)}%*\n\n`;
+      bot
+        .sendMessage(chatId, messageText, {
+          parse_mode: "MarkdownV2",
+          reply_markup: replyMarkup,
+        })
+        .catch((err) => {
+          console.error("[ZeroDrift] Callback alphas error:", err.message);
+          bot
+            .answerCallbackQuery(query.id, {
+              text: "❌ Error loading page",
+              show_alert: false,
+            })
+            .catch(() => {});
+        });
     }
   } catch (err) {
     console.error("[ZeroDrift] Callback query error:", err.message);
