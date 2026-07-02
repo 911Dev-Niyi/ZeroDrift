@@ -199,11 +199,23 @@ let totalTradesProposed = 0;
 // User State Helpers
 
 async function getUser(chatId) {
-  let user = await db.getUser(chatId);
-  if (!user) {
-    user = await db.createUser(chatId);
+  const numericChatId =
+    typeof chatId === "string" ? parseInt(chatId, 10) : chatId;
+
+  // Debug log
+  if (typeof numericChatId !== "number") {
+    console.error(
+      "[ZeroDrift] getUser received non-number:",
+      typeof numericChatId,
+      JSON.stringify(chatId).slice(0, 100),
+    );
+    throw new Error(`Invalid chatId type: ${typeof numericChatId}`);
   }
-  return user;
+
+  const result = await pool.query("SELECT * FROM users WHERE chat_id = $1", [
+    numericChatId,
+  ]);
+  return result.rows[0] || null;
 }
 
 function isUserOnCooldown(chatId, user) {
@@ -802,7 +814,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
 
       bot
         .sendMessage(chatId, messageText, {
-          parse_mode: "MarkdownV2",
+          parse_mode: "HTML", // Use HTML instead of MarkdownV2
           reply_markup: replyMarkup,
         })
         .catch((err) => {
