@@ -567,8 +567,19 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
       if (!user) {
         user = await db.createUser(chatId);
       }
+      function isUserOnCooldown(chatId, user) {
+        if (!user?.last_trade_at) return false;
+        return (
+          Date.now() - new Date(user.last_trade_at).getTime() < COOLDOWN_MS
+        );
+      }
 
-      const onCooldown = isUserOnCooldown(chatId, user);
+      function cooldownRemaining(user) {
+        if (!user?.last_trade_at) return 0;
+        const remaining =
+          COOLDOWN_MS - (Date.now() - new Date(user.last_trade_at).getTime());
+        return Math.max(0, Math.ceil(remaining / 60000));
+      }
       const remaining = cooldownRemaining(user);
       const headlineCount = await db.getHeadlineCount();
 
