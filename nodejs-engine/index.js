@@ -815,7 +815,6 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
 
       bot
         .sendMessage(chatId, messageText, {
-          parse_mode: "HTML", // Use HTML instead of MarkdownV2
           reply_markup: replyMarkup,
         })
         .catch((err) => {
@@ -1104,7 +1103,6 @@ bot.on("callback_query", async (query) => {
 
       bot
         .sendMessage(chatId, messageText, {
-          parse_mode: "MarkdownV2",
           reply_markup: replyMarkup,
         })
         .catch((err) => {
