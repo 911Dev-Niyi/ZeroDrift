@@ -1102,7 +1102,9 @@ bot.on("callback_query", async (query) => {
       };
 
       bot
-        .sendMessage(chatId, messageText, {
+        .editMessageText(messageText, {
+          chat_id: chatId,
+          message_id: query.message.message_id,
           reply_markup: replyMarkup,
         })
         .catch((err) => {
