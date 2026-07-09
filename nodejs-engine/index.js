@@ -307,19 +307,28 @@ function getCachedMarkets(keyword) {
   return null;
 }
 
-async function searchWithCache(keyword) {
+// Use cache + Rust for searches (strategic)
+async function searchMarkets(keyword) {
   const cached = getCachedMarkets(keyword);
-  if (cached) {
-    console.log(`[ZeroDrift] Cache hit: ${keyword}`);
-    return cached;
-  }
-
+  if (cached) return cached;
+  
   const result = await runRust(["search", "--keyword", keyword]);
-  marketCache.set(keyword, {
-    markets: result.markets || [],
-    timestamp: Date.now(),
-  });
+  marketCache.set(keyword, { markets: result.markets || [], timestamp: Date.now() });
   return result.markets || [];
+}
+
+// Use direct API for orderbooks (fast, no spawn overhead)
+async function getOrderbook(slug) {
+  try {
+    const res = await axios.get(`https://api.limitless.exchange/markets/${slug}/orderbook`, { timeout: 5000 });
+    return {
+      yes_price: res.data.asks?.[0]?.price,
+      no_price: res.data.asks?.[0]?.price ? 1 - res.data.asks[0].price : null,
+      status: res.data.status
+    };
+  } catch (err) {
+    return { yes_price: null, no_price: null, status: 'UNKNOWN' };
+  }
 }
 // Telegram Bot
 
