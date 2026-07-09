@@ -296,6 +296,31 @@ function sendSafeError(chatId, context = "operation") {
   );
 }
 
+const marketCache = new Map(); // keyword -> {markets, timestamp}
+const CACHE_TTL = 60000; // 1 minute
+
+function getCachedMarkets(keyword) {
+  const cached = marketCache.get(keyword);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.markets;
+  }
+  return null;
+}
+
+async function searchWithCache(keyword) {
+  const cached = getCachedMarkets(keyword);
+  if (cached) {
+    console.log(`[ZeroDrift] Cache hit: ${keyword}`);
+    return cached;
+  }
+
+  const result = await runRust(["search", "--keyword", keyword]);
+  marketCache.set(keyword, {
+    markets: result.markets || [],
+    timestamp: Date.now(),
+  });
+  return result.markets || [];
+}
 // Telegram Bot
 
 const bot = TELEGRAM_TOKEN
@@ -528,6 +553,7 @@ I monitor breaking crypto news across 4 sources and instantly surface related pr
 /news \\- Latest headlines  
 /alphas \\- On\\-demand alpha opportunities
 /positions \\- Your trade history
+/history \\- Analytics & P&L
 /trade \\<slug\\> \\<YES\\|NO\\> \\<amount\\> \\- Trade proposal
 /status \\- Your account status
 /stop \\- Unsubscribe
@@ -599,23 +625,31 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
 
   bot.onText(/\/markets/, async (msg) => {
     const chatId = msg.chat.id;
-    bot.sendMessage(chatId, "⏳ Scanning Limitless...");
+
+    // Acknowledge immediately
+    bot.sendMessage(chatId, "⏳ Scanning Limitless...").catch(() => {});
+
     try {
-      const results = await Promise.all([
-        runRust(["search", "--keyword", "BTC"]),
-        runRust(["search", "--keyword", "ETH"]),
-        runRust(["search", "--keyword", "SOL"]),
+      const start = Date.now();
+
+      // Search in parallel with cache
+      const [btcMarkets, ethMarkets, solMarkets] = await Promise.all([
+        searchWithCache("BTC"),
+        searchWithCache("ETH"),
+        searchWithCache("SOL"),
       ]);
+
       const seen = new Set();
-      const allMarkets = results
-        .flatMap((r) => r.markets || [])
+      const allMarkets = [btcMarkets, ethMarkets, solMarkets]
+        .flat()
         .filter((m) => {
           if (seen.has(m.slug)) return false;
           seen.add(m.slug);
           return true;
-        });
+        })
+        .slice(0, 10); // Limit to top 10
 
-      // Fetch orderbook to check status
+      // Fetch orderbooks for top 10 only
       const withStatus = await Promise.allSettled(
         allMarkets.map(async (m) => {
           const ob = await runRust(["orderbook", "--slug", m.slug]);
@@ -641,13 +675,15 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
         )
         .join("\n\n");
 
+      const elapsed = Date.now() - start;
       bot.sendMessage(
         chatId,
-        `🎯 *Active Funded Markets*\n\n${lines}\n\nUse: /trade <slug> YES 10`,
+        `🎯 *Active Funded Markets* (${elapsed}ms)\n\n${lines}\n\nUse: /trade <slug> YES 10`,
         { parse_mode: "Markdown" },
       );
     } catch (e) {
-      sendSafeError(chatId, "Funded markets lookup");
+      console.error("[ZeroDrift] Markets error:", e.message);
+      sendSafeError(chatId, "Market scan");
     }
   });
 
@@ -694,7 +730,12 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
     const page = parseInt(pageStr, 10);
     const pageSize = 5;
 
+    bot
+      .sendMessage(chatId, `⚡ Scanning alpha (page ${page})...`)
+      .catch(() => {});
+
     try {
+      const begins = Date.now();
       const keywords = ["BTC", "ETH", "SOL", "XRP", "Trump", "ETF", "SEC"];
       const results = await Promise.allSettled(
         keywords.map((kw) => runRust(["search", "--keyword", kw])),
@@ -729,7 +770,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
       }
 
       const withPrices = await Promise.allSettled(
-        allMarkets.map(async (m) => {
+        allMarkets.slice(0, 10).map(async (m) => {
           const ob = await runRust(["orderbook", "--slug", m.slug]);
           return {
             ...m,
@@ -821,6 +862,9 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
           console.error("[ZeroDrift] Alphas message error:", err.message);
           sendSafeError(chatId, "Alpha scan");
         });
+
+      const stops = Date.now() - begins;
+      console.log(`[ZeroDrift] /alphas page ${page} completed in ${elapsed}ms`);
     } catch (e) {
       console.error("[ZeroDrift] Alphas command error:", e.message);
       sendSafeError(chatId, "Alpha scan");
@@ -882,6 +926,76 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
       });
     } catch (e) {
       sendSafeError(chatId, "Position history fetch");
+    }
+  });
+
+  bot.onText(/\/history/, async (msg) => {
+    const chatId = msg.chat.id;
+
+    try {
+      const trades = await db.getTradesByChatId(chatId, 100); // Get all trades
+
+      if (trades.length === 0) {
+        bot.sendMessage(chatId, "📭 No trade history yet.");
+        return;
+      }
+
+      // Calculate analytics
+      let totalPnL = 0;
+      let winCount = 0;
+      let totalVolume = 0;
+      let bestTrade = null;
+      let worstTrade = null;
+
+      trades.forEach((trade) => {
+        const pnl =
+          trade.estimated_shares * trade.estimated_price - trade.amount_usdc;
+        totalPnL += pnl;
+        totalVolume += parseFloat(trade.amount_usdc);
+
+        if (pnl > 0) winCount++;
+
+        if (!bestTrade || pnl > (bestTrade.pnl || 0)) {
+          bestTrade = { ...trade, pnl };
+        }
+        if (!worstTrade || pnl < (worstTrade.pnl || 0)) {
+          worstTrade = { ...trade, pnl };
+        }
+      });
+
+      const winRate = ((winCount / trades.length) * 100).toFixed(1);
+      const avgTradeSize = (totalVolume / trades.length).toFixed(2);
+      const pnlColor = totalPnL >= 0 ? "📈" : "📉";
+
+      let message = `📊 *Your Position History*\n\n`;
+      message += `${pnlColor} *Total P&L:* $${totalPnL.toFixed(2)}\n`;
+      message += `🎯 *Win Rate:* ${winRate}% (${winCount}/${trades.length})\n`;
+      message += `💰 *Total Volume:* $${totalVolume.toFixed(2)}\n`;
+      message += `📈 *Avg Trade:* $${avgTradeSize}\n`;
+      message += `🏆 *Best Trade:* $${bestTrade.pnl.toFixed(2)} (${bestTrade.market_title})\n`;
+      message += `💔 *Worst Trade:* $${worstTrade.pnl.toFixed(2)} (${worstTrade.market_title})\n`;
+      message += `📝 *Total Trades:* ${trades.length}\n\n`;
+      message += `_Last 10 trades:_\n\n`;
+
+      // Show last 10 trades
+      trades.slice(0, 10).forEach((trade, i) => {
+        const pnl = (
+          trade.estimated_shares * trade.estimated_price -
+          trade.amount_usdc
+        ).toFixed(2);
+        const arrow = pnl >= 0 ? "📈" : "📉";
+        message += `${i + 1}. ${arrow} ${trade.market_title} • ${trade.side} • $${pnl}\n`;
+      });
+
+      bot.sendMessage(chatId, message, { parse_mode: "Markdown" }).catch(() => {
+        bot.sendMessage(
+          chatId,
+          `Analytics: ${winRate}% win rate, $${totalPnL.toFixed(2)} total P&L`,
+        );
+      });
+    } catch (e) {
+      console.error("[ZeroDrift] History command error:", e.message);
+      sendSafeError(chatId, "History fetch");
     }
   });
 
