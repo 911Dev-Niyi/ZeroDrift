@@ -863,7 +863,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
           sendSafeError(chatId, "Alpha scan");
         });
 
-      const stops = Date.now() - begins;
+      const elapsed = Date.now() - begins;
       console.log(`[ZeroDrift] /alphas page ${page} completed in ${elapsed}ms`);
     } catch (e) {
       console.error("[ZeroDrift] Alphas command error:", e.message);
