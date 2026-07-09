@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const RSSParser = require("rss-parser");
+const axios = require("axios");
 const TelegramBot = require("node-telegram-bot-api");
 const { spawn } = require("child_process");
 const cors = require("cors");
@@ -296,40 +297,6 @@ function sendSafeError(chatId, context = "operation") {
   );
 }
 
-const marketCache = new Map(); // keyword -> {markets, timestamp}
-const CACHE_TTL = 60000; // 1 minute
-
-function getCachedMarkets(keyword) {
-  const cached = marketCache.get(keyword);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-    return cached.markets;
-  }
-  return null;
-}
-
-// Use cache + Rust for searches (strategic)
-async function searchMarkets(keyword) {
-  const cached = getCachedMarkets(keyword);
-  if (cached) return cached;
-  
-  const result = await runRust(["search", "--keyword", keyword]);
-  marketCache.set(keyword, { markets: result.markets || [], timestamp: Date.now() });
-  return result.markets || [];
-}
-
-// Use direct API for orderbooks (fast, no spawn overhead)
-async function getOrderbook(slug) {
-  try {
-    const res = await axios.get(`https://api.limitless.exchange/markets/${slug}/orderbook`, { timeout: 5000 });
-    return {
-      yes_price: res.data.asks?.[0]?.price,
-      no_price: res.data.asks?.[0]?.price ? 1 - res.data.asks[0].price : null,
-      status: res.data.status
-    };
-  } catch (err) {
-    return { yes_price: null, no_price: null, status: 'UNKNOWN' };
-  }
-}
 // Telegram Bot
 
 const bot = TELEGRAM_TOKEN
@@ -388,6 +355,53 @@ function runRust(args) {
     }),
     RUST_TIMEOUT_MS,
   );
+}
+
+// Market Cache & API Helpers
+
+const marketCache = new Map();
+const CACHE_TTL = 60000; // 1 minute
+
+function getCachedMarkets(keyword) {
+  const cached = marketCache.get(keyword);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    console.log(`[ZeroDrift] Cache hit: ${keyword}`);
+    return cached.markets;
+  }
+  return null;
+}
+
+async function searchWithCache(keyword) {
+  const cached = getCachedMarkets(keyword);
+  if (cached) return cached;
+
+  try {
+    const result = await runRust(["search", "--keyword", keyword]);
+    const markets = result.markets || [];
+    marketCache.set(keyword, { markets, timestamp: Date.now() });
+    console.log(`[ZeroDrift] Cached: ${keyword} (${markets.length} markets)`);
+    return markets;
+  } catch (err) {
+    console.error(`[ZeroDrift] Search error ${keyword}:`, err.message);
+    return [];
+  }
+}
+
+async function getOrderbook(slug) {
+  try {
+    const res = await axios.get(
+      `https://api.limitless.exchange/markets/${slug}/orderbook`,
+      { timeout: 5000 },
+    );
+    return {
+      yes_price: res.data.asks?.[0]?.price,
+      no_price: res.data.asks?.[0]?.price ? 1 - res.data.asks[0].price : null,
+      status: res.data.status || "UNKNOWN",
+    };
+  } catch (err) {
+    console.error(`[ZeroDrift] Orderbook ${slug} error:`, err.message);
+    return { yes_price: null, no_price: null, status: "UNKNOWN" };
+  }
 }
 
 // RSS MONITOR
@@ -747,7 +761,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
       const begins = Date.now();
       const keywords = ["BTC", "ETH", "SOL", "XRP", "Trump", "ETF", "SEC"];
       const results = await Promise.allSettled(
-        keywords.map((kw) => runRust(["search", "--keyword", kw])),
+        keywords.map((kw) => searchWithCache(kw)),
       );
 
       const seen = new Set();
@@ -780,13 +794,8 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
 
       const withPrices = await Promise.allSettled(
         allMarkets.slice(0, 10).map(async (m) => {
-          const ob = await runRust(["orderbook", "--slug", m.slug]);
-          return {
-            ...m,
-            yes_price: ob.yes_price,
-            no_price: ob.no_price,
-            status: ob.status,
-          };
+          const ob = await getOrderbook(m.slug);
+          return { ...m, ...ob };
         }),
       );
 
@@ -1108,7 +1117,7 @@ bot.on("callback_query", async (query) => {
 
       const keywords = ["BTC", "ETH", "SOL", "XRP", "Trump", "ETF", "SEC"];
       const results = await Promise.allSettled(
-        keywords.map((kw) => runRust(["search", "--keyword", kw])),
+        keywords.map((kw) => searchWithCache(kw)),
       );
 
       const seen = new Set();
@@ -1140,14 +1149,9 @@ bot.on("callback_query", async (query) => {
       }
 
       const withPrices = await Promise.allSettled(
-        allMarkets.map(async (m) => {
-          const ob = await runRust(["orderbook", "--slug", m.slug]);
-          return {
-            ...m,
-            yes_price: ob.yes_price,
-            no_price: ob.no_price,
-            status: ob.status,
-          };
+        allMarkets.slice(0, 10).map(async (m) => {
+          const ob = await getOrderbook(m.slug);
+          return { ...m, ...ob };
         }),
       );
 
