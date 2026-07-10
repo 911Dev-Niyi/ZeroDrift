@@ -306,26 +306,17 @@ const bot = TELEGRAM_TOKEN
   : null;
 
 if (bot) {
-  // Stop any existing polling before starting new one
-  bot
-    .stopPolling()
-    .then(() => {
-      bot.startPolling();
-      console.log("[ZeroDrift] Telegram bot polling started");
-    })
-    .catch((err) => {
-      console.warn(
-        "[ZeroDrift] Polling stop warning (expected on cold start):",
-        err.message,
-      );
-      bot.startPolling();
-    });
+  // Stop any existing polling gracefully
+  bot.stopPolling().catch(() => {
+  }).then(() => {
+    bot.startPolling();
+    console.log('[ZeroDrift] Telegram bot polling started');
+  });
 
-  bot.on("polling_error", (err) => {
-    if (err.code === "ETELEGRAM") {
-      console.error("[ZeroDrift] Telegram conflict — another instance running");
-    } else {
-      console.error("[ZeroDrift] Telegram polling error:", err.code);
+  bot.on('polling_error', (err) => {
+    if (err.code === 'ETELEGRAM' && err.message.includes('409')) {
+      console.error('[ZeroDrift] Bot conflict detected — restarting polling');
+      bot.stopPolling().then(() => bot.startPolling());
     }
   });
 } else {
@@ -374,12 +365,15 @@ function getCachedMarkets(keyword) {
 async function searchWithCache(keyword) {
   const cached = getCachedMarkets(keyword);
   if (cached) return cached;
-
+  
   try {
     const result = await runRust(["search", "--keyword", keyword]);
     const markets = result.markets || [];
+    console.log(`[ZeroDrift] Search ${keyword}: got ${markets.length} markets`);
+    if (markets.length > 0) {
+      console.log(`  Sample: ${markets[0].slug} - ${markets[0].title}`);
+    }
     marketCache.set(keyword, { markets, timestamp: Date.now() });
-    console.log(`[ZeroDrift] Cached: ${keyword} (${markets.length} markets)`);
     return markets;
   } catch (err) {
     console.error(`[ZeroDrift] Search error ${keyword}:`, err.message);
