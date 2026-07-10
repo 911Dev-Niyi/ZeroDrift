@@ -782,6 +782,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
       const withPrices = await Promise.allSettled(
         allMarkets.slice(0, 10).map(async (m) => {
           const ob = await getOrderbook(m.slug);
+          console.log(`[ZeroDrift] Orderbook ${m.slug}: status=${ob.status}, yes=${ob.yes_price}`);
           return { ...m, ...ob };
         }),
       );
@@ -1138,6 +1139,7 @@ bot.on("callback_query", async (query) => {
       const withPrices = await Promise.allSettled(
         allMarkets.slice(0, 10).map(async (m) => {
           const ob = await getOrderbook(m.slug);
+          console.log(`[ZeroDrift] Orderbook ${m.slug}: status=${ob.status}, yes=${ob.yes_price}`);
           return { ...m, ...ob };
         }),
       );
