@@ -307,15 +307,17 @@ const bot = TELEGRAM_TOKEN
 
 if (bot) {
   // Stop any existing polling gracefully
-  bot.stopPolling().catch(() => {
-  }).then(() => {
-    bot.startPolling();
-    console.log('[ZeroDrift] Telegram bot polling started');
-  });
+  bot
+    .stopPolling()
+    .catch(() => {})
+    .then(() => {
+      bot.startPolling();
+      console.log("[ZeroDrift] Telegram bot polling started");
+    });
 
-  bot.on('polling_error', (err) => {
-    if (err.code === 'ETELEGRAM' && err.message.includes('409')) {
-      console.error('[ZeroDrift] Bot conflict detected — restarting polling');
+  bot.on("polling_error", (err) => {
+    if (err.code === "ETELEGRAM" && err.message.includes("409")) {
+      console.error("[ZeroDrift] Bot conflict detected — restarting polling");
       bot.stopPolling().then(() => bot.startPolling());
     }
   });
@@ -365,7 +367,7 @@ function getCachedMarkets(keyword) {
 async function searchWithCache(keyword) {
   const cached = getCachedMarkets(keyword);
   if (cached) return cached;
-  
+
   try {
     const result = await runRust(["search", "--keyword", keyword]);
     const markets = result.markets || [];
@@ -447,22 +449,17 @@ async function pollRSS() {
       try {
         const markets = await runRust(["search", "--keyword", keyword]);
         // Filter out non-crypto markets (sports, politics unrelated to crypto)
-        const cryptoMarkets = markets.markets.filter((m) => {
+        const cryptoMarkets = allMarkets.filter((m) => {
           const t = (m.title || m.slug).toLowerCase();
-          return (
-            t.includes("btc") ||
-            t.includes("eth") ||
-            t.includes("sol") ||
-            t.includes("bitcoin") ||
-            t.includes("ethereum") ||
-            t.includes("solana") ||
-            t.includes("crypto") ||
+          // Include: crypto, prediction markets, and finance
+          const include =
             t.includes("up or down") ||
             t.includes("price") ||
-            t.includes("ton") ||
-            t.includes("xrp") ||
-            t.includes("bnb")
-          );
+            t.includes("crypto");
+          // Exclude: sports, mainstream politics
+          const exclude =
+            t.includes("nba") || t.includes("nfl") || t.includes("soccer");
+          return include && !exclude;
         });
         if (cryptoMarkets.length > 0) {
           const topMarket = cryptoMarkets[0];
