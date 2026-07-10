@@ -763,20 +763,16 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
           const t = (m.title || m.slug).toLowerCase();
           if (seen.has(m.slug)) return false;
           seen.add(m.slug);
-          return (
+          const include =
             t.includes("up or down") ||
             t.includes("price") ||
-            t.includes("btc") ||
-            t.includes("eth") ||
-            t.includes("sol") ||
-            t.includes("xrp") ||
-            t.includes("trump") ||
-            t.includes("etf") ||
-            t.includes("bitcoin") ||
-            t.includes("ethereum") ||
-            t.includes("crypto")
-          );
+            t.includes("crypto");
+          const exclude =
+            t.includes("nba") || t.includes("nfl") || t.includes("soccer");
+          return include && !exclude;
         });
+
+        console.log(`[ZeroDrift] /alphas: found ${allMarkets.length} markets after filter`);
 
       if (allMarkets.length === 0) {
         bot.sendMessage(chatId, "📭 No markets found.").catch(() => {});
