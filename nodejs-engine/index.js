@@ -758,7 +758,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
       const seen = new Set();
       const allMarkets = results
         .filter((r) => r.status === "fulfilled")
-        .flatMap((r) => r.value.markets || [])
+        .flatMap((r) => r.value || [])
         .filter((m) => {
           const t = (m.title || m.slug).toLowerCase();
           if (seen.has(m.slug)) return false;
@@ -1110,7 +1110,7 @@ bot.on("callback_query", async (query) => {
       const seen = new Set();
       const allMarkets = results
         .filter((r) => r.status === "fulfilled")
-        .flatMap((r) => r.value.markets || [])
+        .flatMap((r) => r.value || [])
         .filter((m) => {
           const t = (m.title || m.slug).toLowerCase();
           if (seen.has(m.slug)) return false;
