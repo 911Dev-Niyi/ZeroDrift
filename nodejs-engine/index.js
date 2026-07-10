@@ -387,16 +387,17 @@ async function getOrderbook(slug) {
   try {
     const res = await axios.get(
       `https://api.limitless.exchange/markets/${slug}/orderbook`,
-      { timeout: 5000 },
+      { timeout: 5000 }
     );
+    console.log(`[ZeroDrift] Got orderbook for ${slug}: ${JSON.stringify(res.data).slice(0, 100)}`);
     return {
       yes_price: res.data.asks?.[0]?.price,
       no_price: res.data.asks?.[0]?.price ? 1 - res.data.asks[0].price : null,
-      status: res.data.status || "UNKNOWN",
+      status: res.data.status || 'UNKNOWN'
     };
   } catch (err) {
-    console.error(`[ZeroDrift] Orderbook ${slug} error:`, err.message);
-    return { yes_price: null, no_price: null, status: "UNKNOWN" };
+    console.error(`[ZeroDrift] Orderbook ${slug} failed:`, err.message);
+    return { yes_price: null, no_price: null, status: 'UNKNOWN' };
   }
 }
 
