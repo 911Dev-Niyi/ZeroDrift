@@ -389,15 +389,20 @@ async function getOrderbook(slug) {
       `https://api.limitless.exchange/markets/${slug}/orderbook`,
       { timeout: 5000 }
     );
-    console.log(`[ZeroDrift] Got orderbook for ${slug}: ${JSON.stringify(res.data).slice(0, 100)}`);
+    
+    // Check if market has liquidity (FUNDED status)
+    const hasBids = res.data.bids && res.data.bids.length > 0;
+    const hasAsks = res.data.asks && res.data.asks.length > 0;
+    const status = (hasBids && hasAsks) ? 'FUNDED' : 'UNFUNDED';
+    
     return {
       yes_price: res.data.asks?.[0]?.price,
       no_price: res.data.asks?.[0]?.price ? 1 - res.data.asks[0].price : null,
-      status: res.data.status || 'UNKNOWN'
+      status: status
     };
   } catch (err) {
     console.error(`[ZeroDrift] Orderbook ${slug} failed:`, err.message);
-    return { yes_price: null, no_price: null, status: 'UNKNOWN' };
+    return { yes_price: null, no_price: null, status: 'UNFUNDED' };
   }
 }
 
