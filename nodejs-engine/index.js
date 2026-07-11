@@ -9,7 +9,6 @@ const path = require("path");
 const db = require("./db");
 const security = require("./sec.middleware");
 const helmet = require("helmet");
-const { use } = require("react");
 const app = express();
 app.use(cors());
 app.use(express.json());
