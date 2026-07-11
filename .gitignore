@@ -19,3 +19,6 @@ nodejs-engine/.env
 .DS_Store
 Thumbs.db
 EOF
+
+#TODO
+aomi.toml

@@ -9,6 +9,7 @@ const path = require("path");
 const db = require("./db");
 const security = require("./sec.middleware");
 const helmet = require("helmet");
+const { use } = require("react");
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -352,6 +353,15 @@ function runRust(args) {
 
 // Market Cache & API Helpers
 
+const CACHE_MAX_SIZE = 50; // Max 50 keywords cached
+function setCacheWithLimit(key, value) {
+  if (marketCache.size >= CACHE_MAX_SIZE) {
+    const firstKey = marketCache.keys().next().value;
+    marketCache.delete(firstKey);
+  }
+  marketCache.set(key, value);
+}
+
 const marketCache = new Map();
 const CACHE_TTL = 60000; // 1 minute
 
@@ -371,11 +381,8 @@ async function searchWithCache(keyword) {
   try {
     const result = await runRust(["search", "--keyword", keyword]);
     const markets = result.markets || [];
-    console.log(`[ZeroDrift] Search ${keyword}: got ${markets.length} markets`);
-    if (markets.length > 0) {
-      console.log(`  Sample: ${markets[0].slug} - ${markets[0].title}`);
-    }
-    marketCache.set(keyword, { markets, timestamp: Date.now() });
+    setCacheWithLimit(keyword, { markets, timestamp: Date.now() }); // Use limited cache
+
     return markets;
   } catch (err) {
     console.error(`[ZeroDrift] Search error ${keyword}:`, err.message);
@@ -387,22 +394,22 @@ async function getOrderbook(slug) {
   try {
     const res = await axios.get(
       `https://api.limitless.exchange/markets/${slug}/orderbook`,
-      { timeout: 5000 }
+      { timeout: 5000 },
     );
-    
+
     // Check if market has liquidity (FUNDED status)
     const hasBids = res.data.bids && res.data.bids.length > 0;
     const hasAsks = res.data.asks && res.data.asks.length > 0;
-    const status = (hasBids && hasAsks) ? 'FUNDED' : 'UNFUNDED';
-    
+    const status = hasBids && hasAsks ? "FUNDED" : "UNFUNDED";
+
     return {
       yes_price: res.data.asks?.[0]?.price,
       no_price: res.data.asks?.[0]?.price ? 1 - res.data.asks[0].price : null,
-      status: status
+      status: status,
     };
   } catch (err) {
     console.error(`[ZeroDrift] Orderbook ${slug} failed:`, err.message);
-    return { yes_price: null, no_price: null, status: 'UNFUNDED' };
+    return { yes_price: null, no_price: null, status: "UNFUNDED" };
   }
 }
 
@@ -778,8 +785,6 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
           return include && !exclude;
         });
 
-        console.log(`[ZeroDrift] /alphas: found ${allMarkets.length} markets after filter`);
-
       if (allMarkets.length === 0) {
         bot.sendMessage(chatId, "📭 No markets found.").catch(() => {});
         return;
@@ -788,7 +793,6 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
       const withPrices = await Promise.allSettled(
         allMarkets.slice(0, 10).map(async (m) => {
           const ob = await getOrderbook(m.slug);
-          console.log(`[ZeroDrift] Orderbook ${m.slug}: status=${ob.status}, yes=${ob.yes_price}`);
           return { ...m, ...ob };
         }),
       );
@@ -1145,7 +1149,6 @@ bot.on("callback_query", async (query) => {
       const withPrices = await Promise.allSettled(
         allMarkets.slice(0, 10).map(async (m) => {
           const ob = await getOrderbook(m.slug);
-          console.log(`[ZeroDrift] Orderbook ${m.slug}: status=${ob.status}, yes=${ob.yes_price}`);
           return { ...m, ...ob };
         }),
       );
@@ -1620,7 +1623,9 @@ app.get("/api/health", async (req, res) => {
         telegram_bot: !!bot,
         rss_feeds: RSS_FEEDS.length,
         seen_headlines: headlineCount,
+        cache_size: marketCache.size,
       },
+      warnings: rssMemory > maxMemory * 0.85 ? ["High memory usage"] : [],
     });
   } catch (error) {
     console.error("[ZeroDrift] Health check error:", error);
@@ -1653,6 +1658,15 @@ async function shutdown() {
     await bot.stopPolling();
     console.log("[ZeroDrift] Telegram bot stopped");
   }
+
+  // Close database pool
+  try {
+    await db.pool.end();
+    console.log("[ZeroDrift] Database connections closed");
+  } catch (err) {
+    console.error("[ZeroDrift] Database shutdown error:", err.message);
+  }
+
   process.exit(0);
 }
 
@@ -1676,3 +1690,15 @@ app.listen(PORT, async () => {
   pollRSS();
   setInterval(pollRSS, POLL_INTERVAL_MS);
 });
+
+setInterval(() => {
+  const used = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+  const total = Math.round(process.memoryUsage().heapTotal / 1024 / 1024);
+
+  console.log(`[ZeroDrift] Memory: ${used}MB / ${total}MB`);
+
+  if (used > total * 0.85) {
+    console.warn("[ZeroDrift] ⚠️ High memory usage — clearing caches");
+    marketCache.clear();
+  }
+}, 30000); // Every 30s
