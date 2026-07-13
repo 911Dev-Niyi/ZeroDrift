@@ -431,7 +431,7 @@ async function pollRSS() {
     ).length;
     const allItems = feedResults
       .filter((r) => r.status === "fulfilled")
-      .flatMap((r) => r.value.items);
+      .flatMap((r) => r.value.items).slice(0, 100);
 
     const newItems = [];
     for (const item of allItems) {
@@ -443,12 +443,11 @@ async function pollRSS() {
       newItems.push(item);
     }
 
-    for (const item of newItems) {
+    for (const item of newItems.slice(0, 5)) {
       const newsTimestamp = new Date(item.pubDate || Date.now()).getTime();
       latestNews.unshift({
         title: item.title,
         link: item.link,
-        pubDate: item.pubDate,
         timestamp: newsTimestamp,
       });
       if (isFirstLoad) continue;
@@ -459,9 +458,9 @@ async function pollRSS() {
 
       const keyword = extractKeyword(item.title);
       try {
-        const markets = await runRust(["search", "--keyword", keyword]);
+        const markets = await searchWithCache(keyword);
         // Filter out non-crypto markets (sports, politics unrelated to crypto)
-        const cryptoMarkets = allMarkets.filter((m) => {
+        const cryptoMarkets = markets.filter((m) => {
           const t = (m.title || m.slug).toLowerCase();
           // Include: crypto, prediction markets, and finance
           const include =
@@ -486,7 +485,7 @@ async function pollRSS() {
 
     latestNews = [
       ...new Map(latestNews.map((n) => [n.title, n])).values(),
-    ].slice(0, 50);
+    ].slice(0, 30);
 
     if (newItems.length > 0) {
       const headlineCount = await db.getHeadlineCount();
@@ -603,7 +602,6 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
 
   bot.onText(/\/status/, async (msg) => {
     const chatId = msg.chat.id;
-    console.log(`[ZeroDrift] Log chatId:${chatId}` )
 
     try {
       let user = await db.getUser(chatId);
@@ -1697,7 +1695,7 @@ setInterval(() => {
 
   console.log(`[ZeroDrift] Memory: ${used}MB / ${total}MB`);
 
-  if (used > total * 0.85) {
+  if (used > total * 0.95) {
     console.warn("[ZeroDrift] ⚠️ High memory usage — clearing caches");
     marketCache.clear();
   }

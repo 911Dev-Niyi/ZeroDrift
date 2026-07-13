@@ -15,6 +15,9 @@ frontend/.next/
 frontend/.env.local
 nodejs-engine/.env
 
+# Files
+nodejs-engine/script.js
+
 # OS
 .DS_Store
 Thumbs.db
