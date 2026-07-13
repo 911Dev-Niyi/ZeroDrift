@@ -603,6 +603,7 @@ _Alerts: max ${MAX_ALERTS_PER_HOUR}/hour\\. Auto\\-quiet for 2h after executing 
 
   bot.onText(/\/status/, async (msg) => {
     const chatId = msg.chat.id;
+    console.log(`[ZeroDrift] Log chatId:${chatId}` )
 
     try {
       let user = await db.getUser(chatId);
